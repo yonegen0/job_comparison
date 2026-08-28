@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{TITLE}}</title>
+  <style>{{STYLE}}</style>
+</head>
+<body>
+{{PAGES}}
+<script>
+(() => {
+  const fitPage = (page) => {
+    const main = page.querySelector('.page-main');
+    const modes = ['', 'compact', 'extra-compact'];
+    for (const mode of modes) {
+      page.classList.remove('compact', 'extra-compact');
+      if (mode) page.classList.add(mode);
+      void main.offsetHeight;
+      if (main.scrollHeight <= main.clientHeight + 1) return;
+    }
+    page.classList.add('has-layout-error');
+  };
+  document.querySelectorAll('.page').forEach(fitPage);
+  document.documentElement.dataset.layoutReady = 'true';
+})();
+</script>
+</body>
+</html>

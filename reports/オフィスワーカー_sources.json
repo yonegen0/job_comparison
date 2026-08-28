@@ -1,0 +1,197 @@
+{
+  "report": {
+    "title": "求人比較資料｜オフィスワーカー",
+    "subtitle": "28歳・保育士経験7年からのキャリアチェンジ",
+    "created_date": "2026-08-23",
+    "anonymous": true
+  },
+  "candidate": {
+    "summary": "28歳・保育士経験7年。事務・受付系への転職を希望し、愛知県勤務とワークライフバランスを重視。",
+    "unknowns": [
+      "最終学歴",
+      "正社員経験・在籍期間の詳細",
+      "普通自動車運転免許の有無",
+      "PC・Excel・Wordスキル",
+      "プログラミング学習歴",
+      "保護者対応経験を営業・顧客折衝経験として扱えるか"
+    ]
+  },
+  "jobs": [
+    {
+      "rank": 1,
+      "company": "日本生命保険相互会社",
+      "position": "営業事務",
+      "position_contains": "営業事務",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\日本生命保険相互会社（営業事務）.pdf",
+      "sha256": "b6ab84dd7b2030f1e48127a98a308b77f97c57c70df75a433d717336d37a6eae",
+      "priority_group": "第一志望群",
+      "conflicts": {
+        "年収": "年収専用欄は400～450万円ですが、給与詳細には350～400万円の別記載があります。専用欄を主値として併記します。",
+        "年間休日": "年間休日専用欄は120日、求人名は120日以上です。専用欄を主値として併記します。"
+      },
+      "candidate_checks": [
+        {"field": "最終学歴", "message": "大学卒・短期大学卒以上を満たすか確認が必要です。"},
+        {"field": "社会人経験", "message": "社会人経験2年以上を、雇用形態を含む職歴で確認する必要があります。"}
+      ]
+    },
+    {
+      "rank": 2,
+      "company": "ミカタ税理士法人",
+      "position": "税務会計コンサルタント",
+      "position_contains": "税務会計コンサルタント",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\ミカタ税理士法人（税務会計コンサルタント）.pdf",
+      "sha256": "f697c635d768438cef710c1052afb47658598c0ba33058ae8231e00cef9179b0",
+      "priority_group": "第一志望群",
+      "candidate_checks": [
+        {"field": "正社員経験", "message": "正社員として勤続2年以上の社会人経験を満たすか確認が必要です。"}
+      ]
+    },
+    {
+      "rank": 3,
+      "company": "株式会社不動産SHOPナカジツ",
+      "position": "営業アシスタント／フロアセールススタッフ",
+      "position_contains": "営業アシスタント",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\株式会社不動産SHOPナカジツ（営業アシスタント／フロアセールススタッフ）.pdf",
+      "sha256": "1ce10b66cf2b9b1ec37d1696e43113113d0e1bd7d8eb797f4cd88c85f09778ae",
+      "priority_group": "第一志望群",
+      "corrections": {"年間休日": "120日"},
+      "conflicts": {
+        "年間休日": "資料では年間休日専用欄の120日を主値とします。求人名・本文の表現差は応募前に確認します。"
+      },
+      "candidate_checks": [
+        {"field": "最終学歴", "message": "高校卒業以上を満たすか確認が必要です。"}
+      ]
+    },
+    {
+      "rank": 4,
+      "company": "医療法人社団THE CLINIC Institute",
+      "position": "美容クリニックのカウンセラー／コンシェルジュ",
+      "position_contains": "コンシェルジュ",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\医療法人社団THE CLINIC Institute（美容クリニックのカウンセラー／コンシェルジュ）.pdf",
+      "sha256": "e6953a8e98067ba8ecd691bbf167ed0491ff87c86822763464cf78b476433c63",
+      "priority_group": "第一志望群",
+      "candidate_checks": [
+        {"field": "正社員経験", "message": "正社員としての社会人経験3年以上を満たすか確認が必要です。"},
+        {"field": "顧客折衝経験", "message": "保護者対応経験を顧客折衝経験1年以上として扱えるか、企業へ確認が必要です。"},
+        {"field": "PCスキル", "message": "基本的なPCスキルを満たすか確認が必要です。"}
+      ]
+    },
+    {
+      "rank": 5,
+      "company": "株式会社コプロコンストラクション",
+      "position": "安全サポートスタッフ",
+      "position_contains": "安全サポートスタッフ",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\株式会社コプロコンストラクション（安全サポートスタッフ）.pdf",
+      "sha256": "ce8243f125860c450db26856d18be2b8bd15c00001e5af0ce116373141f9613d",
+      "priority_group": "第一志望群",
+      "conflicts": {
+        "転勤": "転勤専用欄は「最大限考慮」、勤務地補足には「転勤がなく」の記載があります。専用欄を主値として併記します。"
+      },
+      "extra_findings": [
+        {
+          "field": "固定残業代",
+          "markdown_value": "40時間分／10時間分の両記載",
+          "pdf_value": "求人票内に固定残業時間の異なる記載あり",
+          "final_value": "応募前確認",
+          "verdict": "併記",
+          "source_heading": "給与詳細／勤務地補足",
+          "page": 2,
+          "message": "固定残業代の時間数に複数記載があるため、雇用条件通知書で確認が必要です。"
+        }
+      ],
+      "candidate_checks": [
+        {"field": "普通自動車免許", "message": "愛知勤務で普通自動車運転免許が必要か、本人の免許保有とあわせて確認が必要です。"}
+      ]
+    },
+    {
+      "rank": 6,
+      "company": "株式会社タイミー",
+      "position": "現場リーダー（フィールドマネージャー）",
+      "position_contains": "現場リーダー",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\株式会社タイミー（現場リーダー（フィールドマネージャー））.pdf",
+      "sha256": "9ddbff9e958ef8b7a460bda9231eeb49411f11af8d9864a61e3a2f443a3afe51",
+      "priority_group": "第二志望群",
+      "corrections": {"年間休日": "120日"},
+      "conflicts": {
+        "転勤": "転勤なしの特徴表示、転勤専用欄の「最大限考慮」、応募条件の「参照勤務地内で転勤可能」が併記されています。専用欄を主値とします。"
+      },
+      "candidate_checks": [
+        {"field": "PCスキル", "message": "文字入力・資料閲覧等のPC操作経験を確認する必要があります。"},
+        {"field": "転勤条件", "message": "愛知固定が可能か、東海圏内の転勤条件を企業へ確認する必要があります。"}
+      ]
+    },
+    {
+      "rank": 7,
+      "company": "株式会社アルプスビジネスサービス",
+      "position": "エンジニアアシスタント",
+      "position_contains": "エンジニアアシスタント",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\株式会社アルプスビジネスサービス（エンジニアアシスタント）.pdf",
+      "sha256": "032dc3867b5851e226535ccaf68c2c560eb93320a6cb7614ebc01c4f55fd4218",
+      "priority_group": "第二志望群",
+      "source_missing_fields": ["インセンティブ"],
+      "candidate_checks": [
+        {"field": "最終学歴", "message": "高校卒業以上を満たすか確認が必要です。"},
+        {"field": "PCスキル", "message": "Excel・Word・PowerPointの基本操作を確認する必要があります。"},
+        {"field": "転勤条件", "message": "転勤可能が必須条件のため、愛知固定希望との両立可否を確認する必要があります。"}
+      ]
+    },
+    {
+      "rank": 8,
+      "company": "株式会社partners",
+      "position": "ITエンジニア職（未経験）",
+      "position_contains": "未経験歓迎ITエンジニア職",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\株式会社partners（ITエンジニア職（未経験））.pdf",
+      "sha256": "96bcc432abe0397ca4f86c50a75a796dfa2aeec7e2fe72666b838cc701a5a0f4",
+      "priority_group": "条件付き候補",
+      "candidate_checks": [
+        {"field": "プログラミング学習", "message": "3か月以上のプログラミング学習歴を確認する必要があります。"},
+        {"field": "職歴継続・離職期間", "message": "他社で1年以上継続、離職1年以内等の条件を職歴で確認する必要があります。"}
+      ]
+    },
+    {
+      "rank": 9,
+      "company": "アデコ株式会社【デジタルキャリアシード】",
+      "position": "デジタル事務スタッフ",
+      "position_contains": "デジタル事務スタッフ",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\事務\\アデコ株式会社【デジタルキャリアシード】（デジタル事務スタッフ）.pdf",
+      "sha256": "dd81caf49c93a7c8e947b6557adb40fd0ca0229150a0e5e57e40fece8adf7980",
+      "priority_group": "条件付き候補",
+      "conflicts": {
+        "勤務地": "勤務地欄には愛知県・名古屋市等の記載がありますが、応募条件の居住・通勤要件に愛知がありません。愛知採用可否の確認が必要です。"
+      },
+      "candidate_checks": [
+        {"field": "雇用経験", "message": "正社員・契約社員等の雇用経験半年以上を確認する必要があります。"},
+        {"field": "Excel・PC環境", "message": "Excel基本関数の知見と、研修用PC・ネット環境を確認する必要があります。"},
+        {"field": "愛知応募条件", "message": "愛知在住者が現在応募可能か、勤務地欄と応募条件の不整合を企業へ確認する必要があります。"}
+      ]
+    },
+    {
+      "rank": 10,
+      "company": "レバレジーズ株式会社",
+      "position": "名古屋／営業／ポジションサーチ（CA）",
+      "position_contains": "ポジションサーチCA",
+      "source_pdf": "C:\\Users\\user\\Documents\\python自動化\\ダウンロード\\レバレジーズ株式会社（LT各部署／名古屋／営業／ポジションサーチ(CA)）.pdf",
+      "sha256": "167122d67e997d30003cde59f2c9ad623ac65fc56dbc820cda0c3fdb6d6bc2ac",
+      "priority_group": "条件付き候補",
+      "conflicts": {
+        "雇用形態": "雇用形態専用欄は正社員（無期契約）ですが、その他欄に雇用期間12か月の記載があります。専用欄を主値として併記します。"
+      },
+      "section_replacements": {
+        "デメリット": [
+          "• 大卒以上に加え、営業・販売、ITエンジニア、または中高教員免許＋実務のいずれかが必要です。",
+          "• 保育士7年の経歴だけでは必須経験の充足を確認できません。",
+          "• 平均残業30～40時間、フレックスタイム制なしで、土日勤務・平日遅番の可能性があります。",
+          "• 雇用形態は無期契約とする一方、その他欄に雇用期間12か月の記載があります。",
+          "• 固定残業代は月80時間分ですが、求人票は実残業時間ではないと明記しています。"
+        ],
+        "総合判断": [
+          "10位の挑戦枠。年収・名古屋勤務は魅力ですが、学歴・必須経験とWLBのハードルがあります。保育士経験で例外推薦が可能か確認できる場合だけ応募するのが安全です。"
+        ]
+      },
+      "candidate_checks": [
+        {"field": "最終学歴", "message": "大卒以上を満たすか確認が必要です。"},
+        {"field": "必須職歴", "message": "営業・販売、ITエンジニア、または中高教員免許＋実務のいずれかを満たすか確認が必要です。"}
+      ]
+    }
+  ]
+}
