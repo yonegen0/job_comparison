@@ -1,0 +1,4 @@
+# Windows x64 release build dependencies (not shipped as separate installers).
+pyinstaller==6.22.2
+pytest==8.3.5
+setuptools==80.9.0

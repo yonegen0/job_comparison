@@ -90,3 +90,6 @@ class BuildResult:
     page_count: int = 0
     warning_count: int = 0
     findings: list[VerificationFinding] = field(default_factory=list)
+    verdict_counts: dict[str, int] = field(default_factory=dict)
+    applied: bool = False
+    level: str = "success"

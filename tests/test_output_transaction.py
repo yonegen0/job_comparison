@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from job_comparison_app.errors import InputChangedError
 from job_pdf_tool.cli import resolve_output_csv
 from job_pdf_tool.models import DocumentResult, FieldValue
 from job_pdf_tool.output import prepare_main_csv_table, stage_main_csv, stage_report_csv
@@ -72,6 +73,53 @@ def test_apply_rolls_back_when_final_rename_fails(tmp_path: Path, monkeypatch: p
 
     assert source.exists()
     assert sha256_file(source) == result.sha256
+
+
+def test_new_main_csv_is_removed_when_report_publish_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-test-content")
+    result = prepared_result(source, "例示株式会社（事務スタッフ）.pdf")
+    output_csv = tmp_path / "求人情報.csv"
+    report_csv = tmp_path / "処理レポート.csv"
+    real_rename = Path.rename
+
+    def flaky_rename(self: Path, target: Path):
+        if Path(target) == report_csv:
+            raise OSError("simulated report publish failure")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", flaky_rename)
+    with pytest.raises(ApplyError):
+        apply_transaction([result], tmp_path, output_csv, report_csv)
+
+    assert not output_csv.exists()
+    assert not report_csv.exists()
+    assert source.exists()
+    assert sha256_file(source) == result.sha256
+
+
+def test_external_file_created_before_publish_is_preserved(tmp_path: Path) -> None:
+    output_csv = tmp_path / "求人情報.csv"
+    report_csv = tmp_path / "処理レポート.csv"
+
+    def create_external_output() -> None:
+        output_csv.write_text("external", encoding="utf-8")
+
+    with pytest.raises(InputChangedError):
+        apply_transaction(
+            [],
+            tmp_path,
+            output_csv,
+            report_csv,
+            expected_existing={output_csv.resolve(): False, report_csv.resolve(): False},
+            verify_outputs=create_external_output,
+        )
+
+    assert output_csv.read_text(encoding="utf-8") == "external"
+    assert not report_csv.exists()
 
 
 def test_invalid_identity_is_excluded_from_main_csv_and_rename(tmp_path: Path) -> None:

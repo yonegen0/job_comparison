@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+from importlib.resources import files
 from pathlib import Path
 
 from .models import JobEntry, ReportDocument
@@ -178,9 +179,13 @@ def _priority_page(document: ReportDocument) -> str:
 
 
 def render_html(document: ReportDocument, template_dir: Path | None = None) -> str:
-    template_dir = template_dir or Path(__file__).with_name("templates")
-    template = (template_dir / "report.html").read_text(encoding="utf-8")
-    css = (template_dir / "report.css").read_text(encoding="utf-8")
+    if template_dir is None:
+        resources = files("job_comparison_report").joinpath("templates")
+        template = resources.joinpath("report.html").read_text(encoding="utf-8")
+        css = resources.joinpath("report.css").read_text(encoding="utf-8")
+    else:
+        template = (template_dir / "report.html").read_text(encoding="utf-8")
+        css = (template_dir / "report.css").read_text(encoding="utf-8")
     pages = [_cover_page(document)]
     pages.extend(_detail_page(job, job.rank + 1) for job in document.jobs)
     pages.append(_priority_page(document))

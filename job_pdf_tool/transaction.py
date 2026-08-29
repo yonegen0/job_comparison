@@ -4,6 +4,9 @@ import os
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable, Iterable, Mapping
+
+from job_comparison_app.errors import InputChangedError
 
 from .models import DocumentResult
 from .output import MainCsvTable, prepare_main_csv_table, stage_main_csv, stage_report_csv
@@ -16,21 +19,42 @@ class ApplyError(RuntimeError):
 
 @contextmanager
 def directory_lock(input_dir: Path):
-    lock_path = input_dir / ".job_pdf_tool.lock"
+    with directory_locks((input_dir,)):
+        yield
+
+
+@contextmanager
+def directory_locks(directories: Iterable[Path]):
+    resolved = sorted(
+        {Path(directory).resolve() for directory in directories},
+        key=lambda path: str(path).casefold(),
+    )
+    acquired: list[tuple[Path, int]] = []
     try:
-        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError as exc:
-        raise ApplyError(f"別の処理が実行中です。ロック: {lock_path}") from exc
-    try:
-        os.write(descriptor, str(os.getpid()).encode("ascii"))
-        os.close(descriptor)
+        for directory in resolved:
+            lock_path = directory / ".job_pdf_tool.lock"
+            try:
+                descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except OSError as exc:
+                raise ApplyError(f"別の処理が実行中か、ロックを作成できません: {lock_path}") from exc
+            try:
+                os.write(descriptor, str(os.getpid()).encode("ascii"))
+            except OSError:
+                os.close(descriptor)
+                lock_path.unlink(missing_ok=True)
+                raise
+            acquired.append((lock_path, descriptor))
         yield
     finally:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
-        lock_path.unlink(missing_ok=True)
+        for lock_path, descriptor in reversed(acquired):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            try:
+                lock_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _preflight(results: list[DocumentResult], output_csv: Path, report_csv: Path) -> None:
@@ -59,13 +83,21 @@ def apply_transaction(
     input_dir: Path,
     output_csv: Path,
     report_csv: Path,
+    *,
+    expected_existing: Mapping[Path, bool] | None = None,
+    verify_outputs: Callable[[], None] | None = None,
 ) -> MainCsvTable:
     table = prepare_main_csv_table(results, output_csv)
     _preflight(results, output_csv, report_csv)
     staged_main: Path | None = None
     staged_report: Path | None = None
     output_backups: dict[Path, Path] = {}
+    published_targets: set[Path] = set()
     rename_state: list[tuple[DocumentResult, Path, Path, Path]] = []
+    expected = {
+        Path(path).resolve(): exists
+        for path, exists in (expected_existing or {}).items()
+    }
 
     try:
         staged_main = stage_main_csv(table, output_csv)
@@ -91,19 +123,33 @@ def apply_transaction(
             if sha256_file(final) != result.sha256:
                 raise ApplyError(f"リネーム後のSHA-256が一致しません: {final.name}")
 
+        if verify_outputs is not None:
+            verify_outputs()
+        for target in (output_csv, report_csv):
+            resolved_target = target.resolve()
+            if resolved_target in expected and target.exists() != expected[resolved_target]:
+                raise InputChangedError(
+                    f"確認後にCSV出力先が変更されました: {target.name}"
+                )
+
         for target in (output_csv, report_csv):
             if target.exists():
                 backup = target.with_name(f".{target.name}.{uuid.uuid4().hex}.bak")
                 target.replace(backup)
                 output_backups[target] = backup
 
-        staged_main.replace(output_csv)
+        staged_main.rename(output_csv)
+        published_targets.add(output_csv)
         staged_main = None
-        staged_report.replace(report_csv)
+        staged_report.rename(report_csv)
+        published_targets.add(report_csv)
         staged_report = None
 
         for backup in output_backups.values():
-            backup.unlink(missing_ok=True)
+            try:
+                backup.unlink(missing_ok=True)
+            except OSError:
+                pass
         return table
     except Exception as exc:
         rollback_errors: list[str] = []
@@ -120,14 +166,21 @@ def apply_transaction(
             except OSError as rollback_exc:
                 rollback_errors.append(f"{source.name}: {rollback_exc}")
 
-        for target, backup in output_backups.items():
+        for target in reversed((output_csv, report_csv)):
+            backup = output_backups.get(target)
             try:
-                target.unlink(missing_ok=True)
-                if backup.exists():
-                    backup.replace(target)
+                if target in published_targets:
+                    target.unlink(missing_ok=True)
+                if backup is not None and backup.exists():
+                    if target.exists():
+                        rollback_errors.append(f"復元先が既に存在: {target.name}")
+                    else:
+                        backup.replace(target)
             except OSError as rollback_exc:
                 rollback_errors.append(f"{target.name}: {rollback_exc}")
 
+        if isinstance(exc, InputChangedError) and not rollback_errors:
+            raise
         detail = f"処理をロールバックしました: {exc}"
         if rollback_errors:
             detail += " / ロールバック失敗: " + " | ".join(rollback_errors)
