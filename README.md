@@ -1,44 +1,43 @@
-# 求人比較ツール
+# 求人比較ツール 0.2.0
 
-求人PDFのCSV化・安全なリネームと、10求人の比較資料PDF生成を1つのWindows GUIから実行する完全ローカルツールです。
+求人PDFの整理、全文Markdown統合、10求人の比較資料PDF生成を、1つのWindows GUIで行う完全ローカルツールです。外部サービスへファイルを送信しません。
 
-## GUIを使う
+## GUIの3タブ
 
-配布ZIPをフォルダーごと展開し、`求人比較ツールを起動.bat`をダブルクリックします。利用者側へのPythonインストールは不要です。
+1. 「求人PDF整理」: PDFを解析し、改名内容、`求人情報.json`、`処理レポート.json`を事前確認してから一括確定します。
+2. 「求人PDF全文統合テキスト化」: 選択フォルダー直下のPDF本文を、境界マーカー付きの`output\PDF全文_統合テキスト化.md`へ統合します。OCR、要約、補正は行いません。
+3. 「比較資料PDF生成」: 比較Markdownと元PDF対応JSONを照合し、A4縦12ページのPDF、検証済みMarkdown、検証結果CSVを生成します。
 
-- 「求人PDF整理」タブ: PDFフォルダーを解析し、求人情報CSV・処理レポートCSV・改名内容を事前確認してから確定します。CSV出力フォルダーは任意で、空欄ならPDFフォルダー内の`output`へ保存します。
-- 「比較資料PDF生成」タブ: 比較Markdownと既存の元PDF対応JSONを照合し、A4縦12ページのPDF、検証済みMarkdown、検証結果CSVを生成します。
+各工程の「事前確認」はファイルや`output`フォルダーを作成しません。本実行時も必ず最新状態をprepareし、確認後のPDF・JSON・旧CSV・Markdown変更は`CHANGED001`として停止します。
 
-どちらのタブも事前確認ではファイルを変更しません。本実行前に再解析し、確認後に入力が変わった場合も書き込みを中止します。
+## JSON出力と旧CSV移行
 
-求人PDF整理で出力先に`求人情報.csv`または`処理レポート.csv`がある場合は、PDF解析前に「置換する」「別名で保存」「キャンセル」を選択します。別名保存では2ファイルへ同じ番号を付け、既存CSVを変更しません。
+求人PDF整理の出力フォルダーを省略すると`<PDFフォルダー>\output`へ保存します。
 
-画面は各タブとも「主要な3指標」「1. 入力と出力」「2. 事前確認と実行」の順に構成されています。Windows高コントラストではシステム色と標準部品へ自動的に切り替わります。
+- `求人情報.json`: `format`が`job-comparison/job-info`、`format_version`が`1`の求人情報配列です。標準20項目と既存追加項目を保持します。
+- `処理レポート.json`: `format`が`job-comparison/processing-report`、`format_version`が`1`の処理記録です。
 
-比較資料PDF生成にはMicrosoft EdgeまたはGoogle Chromeが必要です。処理中にネットワーク、OCR、LLM、クラウドAPIは使用しません。
+既存JSONには置換・別名保存・キャンセルを解析前に選びます。別名保存は2ファイルに同じ`(n)`を付けます。基準JSONがなく旧`求人情報.csv`が見つかった場合は、初回だけJSONへ取り込めます。CSVは変更・削除されません。
 
-## 開発環境
+## 全文統合テキスト化とAI添付
 
-```powershell
-py -3.13 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-win11.lock -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest tests -q
-```
+「整理タブと同じフォルダーを使用」は、その時点の値を1回コピーします。その後の2タブは独立しています。空ページ、NUL置換、大容量は警告付き成功です。読取不能PDFが1件でもある場合は生成しません。
 
-CLIの詳細は`README_job_pdf_tool.md`と`README_job_comparison_report.md`を参照してください。
+`求人情報.json`と`PDF全文_統合テキスト化.md`を別AIへ添付する場合は、Markdownの`source_file`とJSONの`新ファイル名`を照合してください。JSONの求人配列は`jobs`です。値がない場合は推測せず`記載なし`とし、既存値を不用意に上書きしないでください。
 
-## Windows配布を作る
-
-CPython 3.13.13 x64をインストールした環境で次を実行します。
+## CLI
 
 ```powershell
-.\build_release.bat
+py job_pdf_tool.py --input "C:\求人PDF" --output-json "C:\出力\求人情報.json" --report-json "C:\出力\処理レポート.json"
+py job_pdf_tool.py --input "C:\求人PDF" --apply --import-main-csv "C:\旧\求人情報.csv"
 ```
 
-テスト、PyInstaller onedirビルド、配布内容検査、ZIP再展開検証、SHA-256確認が成功すると、次が生成されます。
+既定はdry-runです。旧`--output-csv`と`--report-csv`は廃止されました。比較資料CLIの検証結果CSVは従来どおりです。詳細は`README_job_pdf_tool.md`と`README_job_comparison_report.md`を参照してください。
 
-- `release\current`
-- `release\JobComparisonTool-0.1.2-win-x64.zip`
-- `release\SHA256SUMS-0.1.2.txt`
+## 配布
 
-配布物には既存のPDF、CSV、Markdown、manifest、reports、outputsを含めません。
+- EXE: `JobComparisonTool.exe`
+- ZIP: `release\JobComparisonTool-0.2.0-win-x64.zip`
+- checksum: `release\SHA256SUMS-0.2.0.txt`
+
+比較資料PDF生成にはEdgeまたはChromeが必要です。配布物には実求人PDF、JSON、CSV、Markdown、manifest、単体Exporter EXEを含めません。

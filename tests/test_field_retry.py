@@ -7,6 +7,7 @@ import job_pdf_tool.cli as cli
 from job_pdf_tool.config import load_aliases
 from job_pdf_tool.models import DocumentResult, EXTRACTED_FIELDS, FieldValue, PdfDocument
 from job_pdf_tool.naming import assign_proposed_names
+from job_pdf_tool.output import load_job_info_json
 from job_pdf_tool.pdf_reader import PdfToolReadError, sha256_file
 from job_pdf_tool.transaction import apply_transaction
 
@@ -443,17 +444,16 @@ def test_retried_identity_drives_csv_and_pdf_name(
     retried = cli._retry_initially_missing_fields(source, initial, load_aliases(None))
     assign_proposed_names([retried], tmp_path)
     retried.finalize_status()
-    output_csv = tmp_path / "求人情報.csv"
-    report_csv = tmp_path / "処理レポート.csv"
-    apply_transaction([retried], tmp_path, output_csv, report_csv)
+    output_json = tmp_path / "求人情報.json"
+    report_json = tmp_path / "処理レポート.json"
+    apply_transaction([retried], tmp_path, output_json, report_json)
 
     target = tmp_path / "再取得株式会社（事務スタッフ）.pdf"
     assert calls["read"] == 1
     assert target.exists()
     assert not source.exists()
     assert sha256_file(target) == digest
-    with output_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        row = next(csv.DictReader(handle))
+    row = load_job_info_json(output_json).jobs[0]
     assert row["会社名"] == "再取得株式会社"
     assert row["新ファイル名"] == target.name
 

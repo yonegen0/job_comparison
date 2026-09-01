@@ -1,2 +1,5 @@
 # Windows 11 / CPython 3.13 runtime dependency.
-pypdf==6.16.1
+pypdf[crypto]==6.16.1
+cryptography==50.0.1
+cffi==2.1.1
+pycparser==3.0

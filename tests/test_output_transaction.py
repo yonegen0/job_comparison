@@ -1,13 +1,19 @@
-import csv
+import json
 from pathlib import Path
 
 import pytest
 
 from job_comparison_app.errors import InputChangedError
-from job_pdf_tool.cli import resolve_output_csv
-from job_pdf_tool.models import DocumentResult, FieldValue
-from job_pdf_tool.output import prepare_main_csv_table, stage_main_csv, stage_report_csv
+from job_pdf_tool.models import DocumentResult, FieldValue, JOB_INFO_FIELDS
+from job_pdf_tool.output import (
+    load_job_info_json,
+    load_processing_report_json,
+    prepare_job_info_document,
+    serialize_job_info,
+    stage_job_info_json,
+)
 from job_pdf_tool.pdf_reader import sha256_file
+from job_pdf_tool.service import resolve_job_info_json
 from job_pdf_tool.transaction import ApplyError, apply_transaction
 
 
@@ -23,208 +29,82 @@ def prepared_result(source: Path, proposed: str) -> DocumentResult:
     return result
 
 
-def test_main_csv_is_excel_compatible(tmp_path: Path) -> None:
-    source = tmp_path / "source.pdf"
-    source.write_bytes(b"%PDF-test")
+def test_job_info_json_is_deterministic_utf8_without_bom(tmp_path: Path) -> None:
+    source = tmp_path / "source.pdf"; source.write_bytes(b"%PDF-test")
     result = prepared_result(source, "例示株式会社（事務スタッフ）.pdf")
     result.fields["業務内容"] = FieldValue("1行目\n2行目", "direct", "仕事内容", 1)
-
-    target = tmp_path / "求人情報.csv"
-    staged = stage_main_csv(prepare_main_csv_table([result], target), target)
+    document = prepare_job_info_document([result], tmp_path / "求人情報.json")
+    first = serialize_job_info(document)
+    second = serialize_job_info(document)
+    assert first == second and first.endswith("\n")
+    assert "例示株式会社" in first and "\\u4f8b" not in first
+    staged = stage_job_info_json(document, tmp_path / "求人情報.json")
     try:
-        raw = staged.read_bytes()
-        assert raw.startswith(b"\xef\xbb\xbf")
-        with staged.open("r", encoding="utf-8-sig", newline="") as handle:
-            row = next(csv.DictReader(handle))
-        assert row["業務内容"] == "1行目\n2行目"
+        assert not staged.read_bytes().startswith(b"\xef\xbb\xbf")
+        assert load_job_info_json(staged).jobs[0]["業務内容"] == "1行目\n2行目"
     finally:
         staged.unlink(missing_ok=True)
 
 
-def test_apply_renames_without_changing_content(tmp_path: Path) -> None:
-    source = tmp_path / "source.pdf"
-    source.write_bytes(b"%PDF-test-content")
+def test_apply_renames_pdf_and_publishes_two_valid_json_files(tmp_path: Path) -> None:
+    source = tmp_path / "source.pdf"; source.write_bytes(b"%PDF-content")
     result = prepared_result(source, "例示株式会社（事務スタッフ）.pdf")
-
-    apply_transaction([result], tmp_path, tmp_path / "求人情報.csv", tmp_path / "処理レポート.csv")
-
+    job = tmp_path / "求人情報.json"; report = tmp_path / "処理レポート.json"
+    apply_transaction([result], tmp_path, job, report)
     target = tmp_path / result.proposed_name
-    assert not source.exists()
-    assert target.exists()
-    assert sha256_file(target) == result.sha256
-    assert (tmp_path / "求人情報.csv").exists()
-    assert (tmp_path / "処理レポート.csv").exists()
+    assert target.exists() and sha256_file(target) == result.sha256
+    assert load_job_info_json(job).jobs[0]["新ファイル名"] == target.name
+    assert load_processing_report_json(report)
 
 
-def test_apply_rolls_back_when_final_rename_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    source = tmp_path / "source.pdf"
-    source.write_bytes(b"%PDF-test-content")
+def test_existing_extra_fields_and_stale_jobs_are_preserved(tmp_path: Path) -> None:
+    source = tmp_path / "source.pdf"; source.write_bytes(b"%PDF-content")
     result = prepared_result(source, "例示株式会社（事務スタッフ）.pdf")
-    real_replace = Path.replace
+    target = tmp_path / "求人情報.json"
+    fields = [*JOB_INFO_FIELDS, "応募メモ"]
+    current = {field: "" for field in fields}
+    current.update({"元ファイル名": "source.pdf", "新ファイル名": "old.pdf", "処理状態": "成功", "応募メモ": "保持"})
+    stale = {field: "" for field in fields}
+    stale.update({"元ファイル名": "missing.pdf", "処理状態": "成功", "応募メモ": "残す"})
+    target.write_text(json.dumps({"format": "job-comparison/job-info", "format_version": 1,
+        "field_order": fields, "jobs": [current, stale]}, ensure_ascii=False), encoding="utf-8")
+    document = prepare_job_info_document([result], target)
+    assert document.jobs[0]["応募メモ"] == "保持"
+    assert document.stale_jobs[0]["応募メモ"] == "残す"
+    assert document.stale_jobs[0]["処理状態"] == "PDF未検出"
 
-    def flaky_replace(self: Path, target: Path):
-        if Path(target).name == result.proposed_name:
-            raise OSError("simulated failure")
-        return real_replace(self, target)
 
-    monkeypatch.setattr(Path, "replace", flaky_replace)
-    with pytest.raises(ApplyError):
-        apply_transaction([result], tmp_path, tmp_path / "求人情報.csv", tmp_path / "処理レポート.csv")
-
-    assert source.exists()
-    assert sha256_file(source) == result.sha256
-
-
-def test_new_main_csv_is_removed_when_report_publish_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = tmp_path / "source.pdf"
-    source.write_bytes(b"%PDF-test-content")
+def test_report_publish_failure_removes_new_job_json_and_restores_pdf(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.pdf"; source.write_bytes(b"%PDF-content")
     result = prepared_result(source, "例示株式会社（事務スタッフ）.pdf")
-    output_csv = tmp_path / "求人情報.csv"
-    report_csv = tmp_path / "処理レポート.csv"
+    job = tmp_path / "求人情報.json"; report = tmp_path / "処理レポート.json"
     real_rename = Path.rename
-
-    def flaky_rename(self: Path, target: Path):
-        if Path(target) == report_csv:
-            raise OSError("simulated report publish failure")
+    def flaky(self: Path, target: Path):
+        if Path(target) == report:
+            raise OSError("simulated")
         return real_rename(self, target)
-
-    monkeypatch.setattr(Path, "rename", flaky_rename)
+    monkeypatch.setattr(Path, "rename", flaky)
     with pytest.raises(ApplyError):
-        apply_transaction([result], tmp_path, output_csv, report_csv)
-
-    assert not output_csv.exists()
-    assert not report_csv.exists()
-    assert source.exists()
-    assert sha256_file(source) == result.sha256
+        apply_transaction([result], tmp_path, job, report)
+    assert source.exists() and not job.exists() and not report.exists()
 
 
-def test_external_file_created_before_publish_is_preserved(tmp_path: Path) -> None:
-    output_csv = tmp_path / "求人情報.csv"
-    report_csv = tmp_path / "処理レポート.csv"
-
-    def create_external_output() -> None:
-        output_csv.write_text("external", encoding="utf-8")
-
-    with pytest.raises(InputChangedError):
-        apply_transaction(
-            [],
-            tmp_path,
-            output_csv,
-            report_csv,
-            expected_existing={output_csv.resolve(): False, report_csv.resolve(): False},
-            verify_outputs=create_external_output,
-        )
-
-    assert output_csv.read_text(encoding="utf-8") == "external"
-    assert not report_csv.exists()
-
-
-def test_invalid_identity_is_excluded_from_main_csv_and_rename(tmp_path: Path) -> None:
-    valid_source = tmp_path / "valid.pdf"
-    invalid_source = tmp_path / "invalid.pdf"
-    valid_source.write_bytes(b"%PDF-valid")
-    invalid_source.write_bytes(b"%PDF-invalid")
-    valid = prepared_result(valid_source, "例示株式会社（事務スタッフ）.pdf")
-
-    invalid = DocumentResult(source_path=invalid_source, sha256=sha256_file(invalid_source))
-    invalid.raw_position = FieldValue("営業職", "direct", "職種分類（中分類）", 1)
-    invalid.resolved_position = "営業職"
-    invalid.position_resolution = "middle_category"
-    invalid.validate_required_identity()
-    invalid.proposed_name = "誤設定された名前.pdf"
-    invalid.finalize_status()
-
-    output_csv = tmp_path / "求人情報.csv"
-    report_csv = tmp_path / "処理レポート.csv"
-    apply_transaction([valid, invalid], tmp_path, output_csv, report_csv)
-
-    assert (tmp_path / valid.proposed_name).exists()
-    assert invalid_source.exists()
-    assert sha256_file(invalid_source) == invalid.sha256
-    assert not (tmp_path / invalid.proposed_name).exists()
-    with output_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    assert len(rows) == 1
-    assert rows[0]["会社名"] == "例示株式会社"
-    with report_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        report_rows = list(csv.DictReader(handle))
-    assert {row["元ファイル名"] for row in report_rows} == {"valid.pdf", "invalid.pdf"}
-
-
-def test_all_invalid_results_create_header_only_main_csv(tmp_path: Path) -> None:
-    source = tmp_path / "invalid.pdf"
-    source.write_bytes(b"%PDF-invalid")
-    result = DocumentResult(source_path=source, sha256=sha256_file(source))
-    result.validate_required_identity()
-    result.finalize_status()
-
-    output_csv = tmp_path / "求人情報.csv"
-    staged_main = stage_main_csv(prepare_main_csv_table([result], output_csv), output_csv)
-    staged_report = stage_report_csv([result], tmp_path / "処理レポート.csv")
-    try:
-        with staged_main.open("r", encoding="utf-8-sig", newline="") as handle:
-            assert list(csv.DictReader(handle)) == []
-        with staged_report.open("r", encoding="utf-8-sig", newline="") as handle:
-            rows = list(csv.DictReader(handle))
-        assert len(rows) == 2
-        assert {row["対象項目"] for row in rows} == {"会社名", "募集ポジション"}
-    finally:
-        staged_main.unlink(missing_ok=True)
-        staged_report.unlink(missing_ok=True)
-
-
-def test_stale_csv_row_and_extra_column_are_preserved(tmp_path: Path) -> None:
-    source = tmp_path / "source.pdf"
-    source.write_bytes(b"%PDF-test")
+def test_late_output_creation_is_not_overwritten(tmp_path: Path) -> None:
+    source = tmp_path / "source.pdf"; source.write_bytes(b"%PDF-content")
     result = prepared_result(source, "例示株式会社（事務スタッフ）.pdf")
-    output_csv = tmp_path / "求人情報.csv"
-    fieldnames = [
-        "会社名",
-        "募集ポジション",
-        "元ファイル名",
-        "新ファイル名",
-        "処理状態",
-        *result.fields.keys(),
-        "メモ",
-    ]
-    with output_csv.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerow(
-            {
-                "会社名": "旧会社",
-                "募集ポジション": "旧職種",
-                "元ファイル名": "missing.pdf",
-                "新ファイル名": "旧会社（旧職種）.pdf",
-                "処理状態": "成功",
-                "メモ": "残す",
-            }
-        )
-
-    table = prepare_main_csv_table([result], output_csv)
-
-    assert table.fieldnames[-1] == "メモ"
-    assert len(table.stale_rows) == 1
-    assert table.stale_rows[0]["処理状態"] == "PDF未検出"
-    assert table.stale_rows[0]["メモ"] == "残す"
+    job = tmp_path / "求人情報.json"; report = tmp_path / "処理レポート.json"
+    document = prepare_job_info_document([result], job)
+    job.write_text("external", encoding="utf-8")
+    with pytest.raises(InputChangedError):
+        apply_transaction([result], tmp_path, job, report,
+            job_info=document,
+            expected_existing={job.resolve(): False, report.resolve(): False})
+    assert job.read_text(encoding="utf-8") == "external"
 
 
-def test_invalid_existing_csv_header_is_rejected(tmp_path: Path) -> None:
-    output_csv = tmp_path / "求人情報.csv"
-    output_csv.write_text("会社名,募集ポジション\n例示株式会社,事務\n", encoding="utf-8-sig")
-
-    with pytest.raises(ValueError, match="必須ヘッダー"):
-        prepare_main_csv_table([], output_csv)
-
-
-def test_output_csv_is_auto_detected_and_multiple_candidates_are_rejected(tmp_path: Path) -> None:
-    first = tmp_path / "求人情報_営業.csv"
-    first.write_text("", encoding="utf-8")
-    assert resolve_output_csv(tmp_path, None) == first.resolve()
-
-    (tmp_path / "求人情報_事務.csv").write_text("", encoding="utf-8")
+def test_json_auto_detection_rejects_multiple_candidates(tmp_path: Path) -> None:
+    first = tmp_path / "求人情報.json"; first.write_text("{}", encoding="utf-8")
+    assert resolve_job_info_json(tmp_path, None) == first.resolve()
+    (tmp_path / "求人情報(1).json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="複数"):
-        resolve_output_csv(tmp_path, None)
+        resolve_job_info_json(tmp_path, None)

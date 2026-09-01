@@ -100,6 +100,16 @@ function Assert-Package {
             throw "Tk/Tcl runtime file is missing: $name"
         }
     }
+    $cffiRuntime = @(Get-ChildItem -LiteralPath $internal -File -Filter "_cffi_backend*.pyd")
+    if ($cffiRuntime.Count -eq 0) {
+        throw "cffi runtime is missing: _cffi_backend.pyd"
+    }
+    $cryptographyRuntime = @(Get-ChildItem -LiteralPath $internal -Recurse -Force | Where-Object {
+        (-not $_.PSIsContainer) -and $_.FullName -match 'cryptography' -and $_.Extension -in @('.pyd', '.dll')
+    })
+    if ($cryptographyRuntime.Count -eq 0) {
+        throw "cryptography binding is missing."
+    }
     $templateRoot = Join-Path $internal "job_comparison_report\templates"
     foreach ($name in @("report.html", "report.css")) {
         Assert-NormalFile -Path (Join-Path $templateRoot $name)

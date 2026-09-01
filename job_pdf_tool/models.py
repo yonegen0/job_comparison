@@ -47,7 +47,7 @@ EXTRACTED_FIELDS = [
     "勤務時間",
 ]
 
-MAIN_CSV_FIELDS = [
+JOB_INFO_FIELDS = [
     "会社名",
     "募集ポジション",
     "元ファイル名",
@@ -56,7 +56,7 @@ MAIN_CSV_FIELDS = [
     *EXTRACTED_FIELDS,
 ]
 
-REPORT_CSV_FIELDS = [
+PROCESS_REPORT_FIELDS = [
     "元ファイル名",
     "新ファイル名",
     "SHA-256",
@@ -153,7 +153,7 @@ class DocumentResult:
             return ReportItem(
                 target_field=field_name,
                 classification="conflict",
-                message=f"{field_name}に異なる候補が複数あるため、CSV・リネーム対象から除外します。",
+                message=f"{field_name}に異なる候補が複数あるため、求人情報・リネーム対象から除外します。",
                 source_heading=value.source_heading,
                 page=value.page,
             )
@@ -162,7 +162,7 @@ class DocumentResult:
             return ReportItem(
                 target_field=field_name,
                 classification=classification,
-                message=f"{field_name}を認識済み見出しから確定できないため、CSV・リネーム対象から除外します。",
+                message=f"{field_name}を認識済み見出しから確定できないため、求人情報・リネーム対象から除外します。",
                 source_heading=value.source_heading,
                 page=value.page,
             )
@@ -172,7 +172,7 @@ class DocumentResult:
             return ReportItem(
                 target_field=field_name,
                 classification="invalid",
-                message=f"{field_name}に文字化け記号があるため、CSV・リネーム対象から除外します。",
+                message=f"{field_name}に文字化け記号があるため、求人情報・リネーム対象から除外します。",
                 source_heading=value.source_heading,
                 page=value.page,
             )
@@ -189,7 +189,7 @@ class DocumentResult:
             return ReportItem(
                 target_field=field_name,
                 classification="missing",
-                message=f"{field_name}に有効な値がないため、CSV・リネーム対象から除外します。",
+                message=f"{field_name}に有効な値がないため、求人情報・リネーム対象から除外します。",
                 source_heading=value.source_heading,
                 page=value.page,
             )
@@ -197,7 +197,7 @@ class DocumentResult:
             return ReportItem(
                 target_field=field_name,
                 classification="invalid",
-                message=f"{field_name}が記号だけのため、CSV・リネーム対象から除外します。",
+                message=f"{field_name}が記号だけのため、求人情報・リネーム対象から除外します。",
                 source_heading=value.source_heading,
                 page=value.page,
             )
@@ -226,7 +226,7 @@ class DocumentResult:
                 issue = ReportItem(
                     target_field="募集ポジション",
                     classification="invalid",
-                    message="募集ポジションの出力値を生成できないため、CSV・リネーム対象から除外します。",
+                    message="募集ポジションの出力値を生成できないため、求人情報・リネーム対象から除外します。",
                     source_heading=self.raw_position.source_heading,
                     page=self.raw_position.page,
                 )
@@ -238,12 +238,12 @@ class DocumentResult:
         return self.identity_validated and not self.required_issues
 
     @property
-    def is_main_csv_eligible(self) -> bool:
+    def is_job_info_eligible(self) -> bool:
         return not self.error and self.has_required_identity
 
     @property
     def is_rename_eligible(self) -> bool:
-        return self.is_main_csv_eligible and bool(self.proposed_name)
+        return self.is_job_info_eligible and bool(self.proposed_name)
 
     def finalize_status(self) -> None:
         if self.error:
@@ -263,9 +263,9 @@ class DocumentResult:
             return
         self.status = "成功"
 
-    def main_csv_row(self) -> dict[str, str]:
-        if not self.is_main_csv_eligible:
-            raise ValueError(f"必須項目が不正なPDFは求人情報CSVへ出力できません: {self.source_path.name}")
+    def job_info_record(self) -> dict[str, str]:
+        if not self.is_job_info_eligible:
+            raise ValueError(f"必須項目が不正なPDFは求人情報へ出力できません: {self.source_path.name}")
         row = {
             "会社名": self.company.value,
             "募集ポジション": self.resolved_position,
@@ -275,3 +275,16 @@ class DocumentResult:
         }
         row.update({name: self.fields[name].value for name in EXTRACTED_FIELDS})
         return row
+
+    # Python API compatibility for callers that have not migrated their terminology yet.
+    @property
+    def is_main_csv_eligible(self) -> bool:
+        return self.is_job_info_eligible
+
+    def main_csv_row(self) -> dict[str, str]:
+        return self.job_info_record()
+
+
+# Import compatibility only. New code must use the format-neutral names above.
+MAIN_CSV_FIELDS = JOB_INFO_FIELDS
+REPORT_CSV_FIELDS = PROCESS_REPORT_FIELDS

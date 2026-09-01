@@ -5,7 +5,7 @@ from tkinter import messagebox, ttk
 from unittest.mock import patch
 
 from job_comparison_app.gui.dialogs import DialogKind, DialogPresenter
-from job_comparison_app.gui.pdf_outputs import PdfCsvConflictChoice
+from job_comparison_app.gui.pdf_outputs import OutputConflictChoice
 import job_comparison_app.gui.visuals as visuals
 
 
@@ -91,8 +91,9 @@ def test_help_contains_steps_and_long_notice_scrolls(tk_window) -> None:
         presenter.show_help("使い方")
         combined = "\n".join(texts)
         assert "1. 求人PDF整理" in combined
-        assert "2. 比較資料PDF生成" in combined
-        assert "3. 補足とショートカット" in combined
+        assert "2. 求人PDF全文統合テキスト化" in combined
+        assert "3. 比較資料PDF生成" in combined
+        assert "4. 補足とショートカット" in combined
         assert "Ctrl+1" in combined
 
         observed = {}
@@ -145,7 +146,7 @@ def test_csv_conflict_dialog_returns_typed_choice(tk_window) -> None:
         _schedule_dialog(root, choose_new)
         assert (
             presenter.ask_pdf_csv_conflict("既存のCSVがあります", "選択してください。")
-            is PdfCsvConflictChoice.SAVE_AS_NEW
+            is OutputConflictChoice.SAVE_AS_NEW
         )
     finally:
         root.destroy()
@@ -157,9 +158,9 @@ def test_csv_conflict_native_fallback_maps_yes_no_cancel(tk_window) -> None:
     try:
         presenter = DialogPresenter(root)
         for native, expected in (
-            (True, PdfCsvConflictChoice.REPLACE),
-            (False, PdfCsvConflictChoice.SAVE_AS_NEW),
-            (None, PdfCsvConflictChoice.CANCEL),
+            (True, OutputConflictChoice.REPLACE),
+            (False, OutputConflictChoice.SAVE_AS_NEW),
+            (None, OutputConflictChoice.CANCEL),
         ):
             with (
                 patch.object(presenter, "_show_dialog", side_effect=tk.TclError),

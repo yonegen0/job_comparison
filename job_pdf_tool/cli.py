@@ -20,7 +20,7 @@ from .service import (
     PdfOrganizationRequest,
     commit_pdf_organization,
     prepare_pdf_organization,
-    resolve_output_csv as _resolve_output_csv,
+    resolve_job_info_json as _resolve_job_info_json,
     summarize,
 )
 from .transaction import ApplyError
@@ -57,8 +57,8 @@ def analyze(input_dir: Path, aliases_path: Path | None = None) -> list[DocumentR
     )
 
 
-def resolve_output_csv(input_dir: Path, explicit: Path | None) -> Path:
-    return _resolve_output_csv(input_dir, explicit)
+def resolve_output_json(input_dir: Path, explicit: Path | None) -> Path:
+    return _resolve_job_info_json(input_dir, explicit)
 
 
 def _summary(results: list[DocumentResult]) -> dict[str, int]:
@@ -67,12 +67,13 @@ def _summary(results: list[DocumentResult]) -> dict[str, int]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="求人PDFをローカルでCSV化し、会社名と職種中分類でリネームします。",
+        description="求人PDFをローカルでJSON化し、会社名と職種中分類でリネームします。",
     )
     parser.add_argument("--input", required=True, type=Path, help="PDFが直下にある入力フォルダ")
-    parser.add_argument("--apply", action="store_true", help="CSV出力とPDFリネームを実行する")
-    parser.add_argument("--output-csv", type=Path, help="求人情報CSVの出力先")
-    parser.add_argument("--report-csv", type=Path, help="処理レポートCSVの出力先")
+    parser.add_argument("--apply", action="store_true", help="JSON出力とPDFリネームを実行する")
+    parser.add_argument("--output-json", type=Path, help="求人情報JSONの出力先")
+    parser.add_argument("--report-json", type=Path, help="処理レポートJSONの出力先")
+    parser.add_argument("--import-main-csv", type=Path, help="初回移行する旧求人情報CSV")
     parser.add_argument("--aliases", type=Path, help="追加の見出し別名を定義したUTF-8 JSON")
     return parser
 
@@ -83,12 +84,12 @@ def print_preview(results: list[DocumentResult], *, applied: bool, stale_count: 
     print(f"\n=== {mode} ===")
     print(f"対象PDF: {len(results)}件")
     if stale_count:
-        print(f"PDF未検出の既存CSV行: {stale_count}件（行を保持）")
+        print(f"PDF未検出の既存job: {stale_count}件（jobを保持）")
     print(
         " / ".join(
             [
-                f"CSV出力対象: {summary['CSV出力対象']}",
-                f"CSV除外: {summary['CSV除外']}（必須項目: {summary['必須項目除外']}）",
+                f"JSON出力対象: {summary['JSON出力対象']}",
+                f"JSON除外: {summary['JSON除外']}（必須項目: {summary['必須項目除外']}）",
                 f"リネーム対象: {summary['リネーム対象']}",
                 f"変更なし: {summary['変更なし']}",
             ]
@@ -106,8 +107,8 @@ def print_preview(results: list[DocumentResult], *, applied: bool, stale_count: 
     )
     print("\n--- 旧名 → 新名 ---")
     for result in results:
-        if not result.is_main_csv_eligible:
-            target = "（CSV除外・改名なし）"
+        if not result.is_job_info_eligible:
+            target = "（JSON除外・改名なし）"
         else:
             target = result.proposed_name or "（改名保留）"
         no_change = " [変更なし]" if target == result.source_path.name else ""
@@ -137,18 +138,19 @@ def main(argv: list[str] | None = None) -> int:
             PdfOrganizationRequest(
                 input_dir=args.input,
                 aliases_path=args.aliases,
-                output_csv=args.output_csv,
-                report_csv=args.report_csv,
+                job_info_json=args.output_json,
+                report_json=args.report_json,
+                import_main_csv=args.import_main_csv,
             )
         )
-        print_preview(plan.results, applied=False, stale_count=len(plan.table.stale_rows))
+        print_preview(plan.results, applied=False, stale_count=len(plan.job_info.stale_jobs))
         if not args.apply:
-            return exit_code(plan.results, len(plan.table.stale_rows))
+            return exit_code(plan.results, len(plan.job_info.stale_jobs))
         result = commit_pdf_organization(plan)
-        print_preview(plan.results, applied=True, stale_count=len(result.table.stale_rows))
-        print(f"\n求人情報CSV: {plan.output_csv}")
-        print(f"処理レポートCSV: {plan.report_csv}")
-        return exit_code(plan.results, len(result.table.stale_rows))
+        print_preview(plan.results, applied=True, stale_count=len(result.job_info.stale_jobs))
+        print(f"\n求人情報JSON: {plan.job_info_json}")
+        print(f"処理レポートJSON: {plan.report_json}")
+        return exit_code(plan.results, len(result.job_info.stale_jobs))
     except (ValueError, OSError, ApplyError, JobComparisonAppError) as exc:
         print(f"エラー: {exc}", file=sys.stderr)
         return 1

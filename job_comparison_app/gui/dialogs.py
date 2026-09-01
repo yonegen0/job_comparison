@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable
 
-from .pdf_outputs import PdfCsvConflictChoice
+from .pdf_outputs import LegacyCsvMigrationChoice, OutputConflictChoice
 from .visuals import (
     STYLE_BUTTON,
     STYLE_CARD_CAPTION,
@@ -24,6 +24,7 @@ from .visuals import (
 _BLOCKED_SHORTCUTS = (
     "<Control-Key-1>",
     "<Control-Key-2>",
+    "<Control-Key-3>",
     "<F1>",
     "<F5>",
 )
@@ -101,17 +102,17 @@ class DialogPresenter:
                 )
             )
 
-    def ask_pdf_csv_conflict(self, title: str, message: str) -> PdfCsvConflictChoice:
+    def ask_output_conflict(self, title: str, message: str) -> OutputConflictChoice:
         actions = (
             DialogAction(
                 "キャンセル",
-                result=PdfCsvConflictChoice.CANCEL,
+                result=OutputConflictChoice.CANCEL,
                 is_default=True,
             ),
-            DialogAction("置換する", result=PdfCsvConflictChoice.REPLACE),
+            DialogAction("置換する", result=OutputConflictChoice.REPLACE),
             DialogAction(
                 "別名で保存",
-                result=PdfCsvConflictChoice.SAVE_AS_NEW,
+                result=OutputConflictChoice.SAVE_AS_NEW,
                 primary=True,
             ),
         )
@@ -121,9 +122,9 @@ class DialogPresenter:
                 title,
                 message,
                 actions=actions,
-                cancel_result=PdfCsvConflictChoice.CANCEL,
+                cancel_result=OutputConflictChoice.CANCEL,
             )
-            return result if isinstance(result, PdfCsvConflictChoice) else PdfCsvConflictChoice.CANCEL
+            return result if isinstance(result, OutputConflictChoice) else OutputConflictChoice.CANCEL
         except tk.TclError:
             native_message = (
                 "「はい」＝置換する\n"
@@ -138,10 +139,46 @@ class DialogPresenter:
                 default=messagebox.CANCEL,
             )
             if result is True:
-                return PdfCsvConflictChoice.REPLACE
+                return OutputConflictChoice.REPLACE
             if result is False:
-                return PdfCsvConflictChoice.SAVE_AS_NEW
-            return PdfCsvConflictChoice.CANCEL
+                return OutputConflictChoice.SAVE_AS_NEW
+            return OutputConflictChoice.CANCEL
+
+    def ask_pdf_csv_conflict(self, title: str, message: str) -> OutputConflictChoice:
+        """0.1.x向けの内部互換名。"""
+        return self.ask_output_conflict(title, message)
+
+    def ask_legacy_csv_migration(
+        self, title: str, message: str
+    ) -> LegacyCsvMigrationChoice:
+        actions = (
+            DialogAction("キャンセル", result=LegacyCsvMigrationChoice.CANCEL, is_default=True),
+            DialogAction("新規作成", result=LegacyCsvMigrationChoice.START_NEW),
+            DialogAction("JSONへ取り込む", result=LegacyCsvMigrationChoice.IMPORT, primary=True),
+        )
+        try:
+            result = self._show_dialog(
+                DialogKind.CONFIRM,
+                title,
+                message,
+                actions=actions,
+                cancel_result=LegacyCsvMigrationChoice.CANCEL,
+            )
+            return result if isinstance(result, LegacyCsvMigrationChoice) else LegacyCsvMigrationChoice.CANCEL
+        except tk.TclError:
+            native = (
+                "「はい」＝JSONへ取り込む\n"
+                "「いいえ」＝新規作成\n"
+                "「キャンセル」＝処理しない\n\n" + message
+            )
+            result = messagebox.askyesnocancel(
+                title, native, parent=self.root, default=messagebox.CANCEL
+            )
+            if result is True:
+                return LegacyCsvMigrationChoice.IMPORT
+            if result is False:
+                return LegacyCsvMigrationChoice.START_NEW
+            return LegacyCsvMigrationChoice.CANCEL
 
     def show(
         self,
@@ -164,15 +201,19 @@ class DialogPresenter:
         sections = (
             (
                 "1. 求人PDF整理",
-                "PDFフォルダーを選択し、必要ならCSV出力フォルダーを指定します。空欄時はPDFフォルダー内のoutputを使用します。事前確認ではファイルやフォルダーを変更しません。",
+                "PDFフォルダーを選択し、必要ならJSON出力フォルダーを指定します。事前確認ではファイルやフォルダーを変更しません。旧求人情報CSVは初回だけJSONへ取り込めます。",
             ),
             (
-                "2. 比較資料PDF生成",
+                "2. 求人PDF全文統合テキスト化",
+                "PDFフォルダーを選択して事前確認し、Markdownを生成します。OCR、要約、本文補正は行いません。求人情報JSONと統合Markdownは別AIへの添付に利用できます。",
+            ),
+            (
+                "3. 比較資料PDF生成",
                 "比較Markdownと元PDF対応JSONを選択し、事前確認後にPDFを生成します。EdgeまたはChromeが必要です。",
             ),
             (
-                "3. 補足とショートカット",
-                "警告付き完了は異常終了ではありません。Ctrl+1 / Ctrl+2: タブ切替、F5: 事前確認、F1: 使い方。",
+                "4. 補足とショートカット",
+                "警告付き完了は異常終了ではありません。Ctrl+1 / Ctrl+2 / Ctrl+3: タブ切替、F5: 事前確認、F1: 使い方。",
             ),
         )
         try:

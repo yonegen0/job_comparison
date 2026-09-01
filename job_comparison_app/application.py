@@ -19,6 +19,15 @@ from job_pdf_tool.service import (
     prepare_pdf_organization,
 )
 from job_pdf_tool.transaction import ApplyError
+from pdf_job_exporter.core import ExtractionError
+from pdf_job_exporter.models import ProgressCallback
+from pdf_job_exporter.service import (
+    PdfTextExportPlan,
+    PdfTextExportRequest,
+    PdfTextExportResult,
+    commit_pdf_text_export,
+    prepare_pdf_text_export,
+)
 
 from .errors import (
     BrowserUnavailableError,
@@ -42,6 +51,34 @@ class JobComparisonApplication:
     def commit_pdf(self, plan: PdfOrganizationPlan) -> PdfOrganizationResult:
         try:
             return commit_pdf_organization(plan)
+        except JobComparisonAppError:
+            raise
+        except ApplyError as exc:
+            if "別の処理" in str(exc) or "ロック" in str(exc):
+                raise ResourceLockError(str(exc)) from exc
+            raise OutputOperationError(str(exc)) from exc
+        except OSError as exc:
+            raise OutputOperationError(str(exc)) from exc
+
+    def prepare_pdf_text_export(
+        self,
+        request: PdfTextExportRequest,
+        progress_callback: ProgressCallback | None = None,
+    ) -> PdfTextExportPlan:
+        try:
+            return prepare_pdf_text_export(request, progress_callback)
+        except JobComparisonAppError:
+            raise
+        except (ExtractionError, ValueError, OSError) as exc:
+            raise InputValidationError(str(exc)) from exc
+
+    def commit_pdf_text_export(
+        self,
+        plan: PdfTextExportPlan,
+        progress_callback: ProgressCallback | None = None,
+    ) -> PdfTextExportResult:
+        try:
+            return commit_pdf_text_export(plan, progress_callback)
         except JobComparisonAppError:
             raise
         except ApplyError as exc:
@@ -92,4 +129,7 @@ __all__ = [
     "ReportBuildRequest",
     "BuildResult",
     "InputChangedError",
+    "PdfTextExportPlan",
+    "PdfTextExportRequest",
+    "PdfTextExportResult",
 ]

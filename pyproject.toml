@@ -4,18 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "job-comparison-tool"
-version = "0.1.2"
+version = "0.2.0"
 description = "求人PDF整理・比較資料生成Windowsデスクトップツール"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
-dependencies = ["pypdf==6.16.1"]
+dependencies = [
+    "pypdf[crypto]==6.16.1",
+    "cryptography==50.0.1",
+    "cffi==2.1.1",
+    "pycparser==3.0",
+]
 
 [project.gui-scripts]
 JobComparisonTool = "job_comparison_app.gui.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["job_comparison_app*", "job_pdf_tool*", "job_comparison_report*"]
+include = ["job_comparison_app*", "job_pdf_tool*", "job_comparison_report*", "pdf_job_exporter*"]
 
 [tool.setuptools.package-data]
 job_comparison_report = ["templates/*.html", "templates/*.css"]

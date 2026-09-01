@@ -9,7 +9,14 @@ from typing import Callable, Iterable, Mapping
 from job_comparison_app.errors import InputChangedError
 
 from .models import DocumentResult
-from .output import MainCsvTable, prepare_main_csv_table, stage_main_csv, stage_report_csv
+from .output import (
+    JobInfoDocument,
+    load_job_info_json,
+    load_processing_report_json,
+    prepare_job_info_document,
+    stage_job_info_json,
+    stage_processing_report_json,
+)
 from .pdf_reader import sha256_file
 
 
@@ -57,10 +64,10 @@ def directory_locks(directories: Iterable[Path]):
                 pass
 
 
-def _preflight(results: list[DocumentResult], output_csv: Path, report_csv: Path) -> None:
-    if output_csv.resolve() == report_csv.resolve():
-        raise ApplyError("求人情報CSVと処理レポートCSVには異なるパスを指定してください。")
-    for target in (output_csv, report_csv):
+def _preflight(results: list[DocumentResult], job_info_json: Path, report_json: Path) -> None:
+    if job_info_json.resolve() == report_json.resolve():
+        raise ApplyError("求人情報JSONと処理レポートJSONには異なるパスを指定してください。")
+    for target in (job_info_json, report_json):
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             try:
@@ -81,15 +88,17 @@ def _preflight(results: list[DocumentResult], output_csv: Path, report_csv: Path
 def apply_transaction(
     results: list[DocumentResult],
     input_dir: Path,
-    output_csv: Path,
-    report_csv: Path,
+    job_info_json: Path,
+    report_json: Path,
     *,
+    job_info: JobInfoDocument | None = None,
+    import_main_csv: Path | None = None,
     expected_existing: Mapping[Path, bool] | None = None,
     verify_outputs: Callable[[], None] | None = None,
-) -> MainCsvTable:
-    table = prepare_main_csv_table(results, output_csv)
-    _preflight(results, output_csv, report_csv)
-    staged_main: Path | None = None
+) -> JobInfoDocument:
+    document = job_info or prepare_job_info_document(results, job_info_json, import_main_csv)
+    _preflight(results, job_info_json, report_json)
+    staged_job_info: Path | None = None
     staged_report: Path | None = None
     output_backups: dict[Path, Path] = {}
     published_targets: set[Path] = set()
@@ -100,8 +109,10 @@ def apply_transaction(
     }
 
     try:
-        staged_main = stage_main_csv(table, output_csv)
-        staged_report = stage_report_csv(results, report_csv, table.stale_rows)
+        staged_job_info = stage_job_info_json(document, job_info_json)
+        staged_report = stage_processing_report_json(
+            results, report_json, document.stale_jobs
+        )
 
         for result in results:
             if not result.is_rename_eligible:
@@ -125,32 +136,34 @@ def apply_transaction(
 
         if verify_outputs is not None:
             verify_outputs()
-        for target in (output_csv, report_csv):
+        for target in (job_info_json, report_json):
             resolved_target = target.resolve()
             if resolved_target in expected and target.exists() != expected[resolved_target]:
                 raise InputChangedError(
-                    f"確認後にCSV出力先が変更されました: {target.name}"
+                    f"確認後にJSON出力先が変更されました: {target.name}"
                 )
 
-        for target in (output_csv, report_csv):
+        for target in (job_info_json, report_json):
             if target.exists():
                 backup = target.with_name(f".{target.name}.{uuid.uuid4().hex}.bak")
                 target.replace(backup)
                 output_backups[target] = backup
 
-        staged_main.rename(output_csv)
-        published_targets.add(output_csv)
-        staged_main = None
-        staged_report.rename(report_csv)
-        published_targets.add(report_csv)
+        staged_job_info.rename(job_info_json)
+        published_targets.add(job_info_json)
+        staged_job_info = None
+        staged_report.rename(report_json)
+        published_targets.add(report_json)
         staged_report = None
 
+        load_job_info_json(job_info_json)
+        load_processing_report_json(report_json)
         for backup in output_backups.values():
             try:
                 backup.unlink(missing_ok=True)
             except OSError:
                 pass
-        return table
+        return document
     except Exception as exc:
         rollback_errors: list[str] = []
         for result, source, temporary, final in reversed(rename_state):
@@ -166,7 +179,7 @@ def apply_transaction(
             except OSError as rollback_exc:
                 rollback_errors.append(f"{source.name}: {rollback_exc}")
 
-        for target in reversed((output_csv, report_csv)):
+        for target in reversed((job_info_json, report_json)):
             backup = output_backups.get(target)
             try:
                 if target in published_targets:
@@ -186,7 +199,7 @@ def apply_transaction(
             detail += " / ロールバック失敗: " + " | ".join(rollback_errors)
         raise ApplyError(detail) from exc
     finally:
-        if staged_main:
-            staged_main.unlink(missing_ok=True)
+        if staged_job_info:
+            staged_job_info.unlink(missing_ok=True)
         if staged_report:
             staged_report.unlink(missing_ok=True)
