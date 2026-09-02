@@ -14,12 +14,14 @@ from pdf_job_exporter.service import PdfTextExportPlan, PdfTextExportRequest
 from job_comparison_app import __version__
 
 from .controller import Controller, ViewModel
+from .dispatcher import MainThreadDispatcher
 from .dialogs import DialogKind, DialogPresenter
 from .export_outputs import ExportOutputConflict, resolve_export_output
 from .pdf_outputs import (
     LegacyCsvMigrationChoice, OrganizationOutputConflict, OutputConflictChoice,
     resolve_base_output_paths,
 )
+from .recruit_feature import RecruitFeaturePanel
 from .visuals import (
     STYLE_BUTTON,
     STYLE_CARD_BODY,
@@ -87,6 +89,7 @@ class TkView:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
+        self._dispatcher = MainThreadDispatcher(root)
         self.controller: Controller | None = None
         self._suppress_changes = False
         self._verified_auto = True
@@ -102,6 +105,8 @@ class TkView:
         self._export_secondary_labels: dict[str, ttk.Label] = {}
         self._tab_canvases: list[tk.Canvas] = []
         self._tab_syncs: list[Callable[[], None]] = []
+        self._selected_tab_index = 0
+        self._changing_tab_programmatically = False
         self.visuals = VisualManager(root, on_change=self._visuals_changed)
         self.style = self.visuals.style
         self.dialogs = DialogPresenter(root, self.visuals)
@@ -117,6 +122,18 @@ class TkView:
         self.root.bind("<Control-Key-1>", lambda event: self._shortcut_tab(0))
         self.root.bind("<Control-Key-2>", lambda event: self._shortcut_tab(1))
         self.root.bind("<Control-Key-3>", lambda event: self._shortcut_tab(2))
+        self.root.bind("<Control-Key-4>", lambda event: self._shortcut_tab(3))
+        self.root.bind("<Alt-j>", lambda event: self._shortcut_recruit("select_jobins"))
+        self.root.bind("<Alt-c>", lambda event: self._shortcut_recruit("select_careerbank"))
+        self.root.bind("<Control-o>", lambda event: self._shortcut_recruit("choose_html"))
+        self.root.bind("<Control-i>", lambda event: self._shortcut_recruit("import_selected"))
+        self.root.bind("<Control-e>", lambda event: self._shortcut_recruit("export_csv"))
+        self.root.bind("<Control-r>", lambda event: self._shortcut_recruit("restore"))
+        self.root.bind("<Control-g>", lambda event: self._shortcut_recruit("generate_analysis"))
+        self.root.bind(
+            "<Control-Shift-O>",
+            lambda event: self._shortcut_recruit("open_output_folder"),
+        )
         self.root.bind("<F5>", lambda event: self._shortcut_preview())
 
     def _build_variables(self) -> None:
@@ -165,7 +182,7 @@ class TkView:
         )
         ttk.Label(
             header,
-            text="求人PDFを整理・全文統合テキスト化し、10求人の比較資料PDFを生成します。",
+            text="求人HTMLの取り込みからPDF整理・比較資料生成まで、1つの画面で行います。",
             style=STYLE_SUBTITLE,
         ).grid(row=0, column=1, sticky="sw", padx=(16, 0))
         ttk.Label(
@@ -181,12 +198,23 @@ class TkView:
 
         self.notebook = ttk.Notebook(self.root, style=STYLE_NOTEBOOK)
         self.notebook.grid(row=2, column=0, sticky="nsew", padx=20, pady=(4, 4))
+        self.recruit_tab_shell, self.recruit_tab = self._scrollable_tab()
         self.pdf_tab_shell, self.pdf_tab = self._scrollable_tab()
         self.export_tab_shell, self.export_tab = self._scrollable_tab()
         self.report_tab_shell, self.report_tab = self._scrollable_tab()
+        self.notebook.add(self.recruit_tab_shell, text="求人取得")
         self.notebook.add(self.pdf_tab_shell, text="求人PDF整理")
         self.notebook.add(self.export_tab_shell, text="求人PDF全文統合テキスト化")
         self.notebook.add(self.report_tab_shell, text="比較資料PDF生成")
+        self.notebook.bind("<<NotebookTabChanged>>", self._top_tab_changed, add="+")
+        self._select_top_tab(0)
+        self.recruit_panel = RecruitFeaturePanel(
+            root=self.root,
+            parent=self.recruit_tab,
+            visuals=self.visuals,
+            dialogs=self.dialogs,
+            post_callback=self.post,
+        )
         self._build_pdf_tab()
         self._build_export_tab()
         self._build_report_tab()
@@ -830,7 +858,7 @@ class TkView:
 
     def _shortcut_tab(self, index: int) -> str:
         if not self._busy:
-            self.notebook.select(index)
+            self._select_top_tab(index)
         return "break"
 
     def _shortcut_preview(self) -> str:
@@ -843,16 +871,80 @@ class TkView:
             self.show_help()
         return "break"
 
+    def _shortcut_recruit(self, action: str) -> str:
+        if (
+            not self._busy
+            and self.controller is not None
+            and self._selected_top_tab() == 0
+        ):
+            self.controller.recruit_action(action)
+        return "break"
+
     def _preview_active(self) -> None:
         if not self.controller:
             return
-        selected = self.notebook.index(self.notebook.select())
+        selected = self._selected_top_tab()
         if selected == 0:
+            return
+        if selected == 1:
             self.controller.preview_pdf()
-        elif selected == 1:
+        elif selected == 2:
             self.controller.preview_export()
         else:
             self.controller.preview_report()
+
+    def _top_tab_changed(self, event: tk.Event) -> None:
+        del event
+        if self._changing_tab_programmatically:
+            return
+        selected = self.notebook.select()
+        if not selected:
+            return
+        try:
+            index = self.notebook.index(selected)
+        except tk.TclError:
+            return
+        if 0 <= index < self.notebook.index("end"):
+            self._selected_tab_index = index
+
+    def _selected_top_tab(self) -> int:
+        selected = self.notebook.select()
+        if selected:
+            try:
+                index = self.notebook.index(selected)
+            except tk.TclError:
+                index = self._selected_tab_index
+            else:
+                if 0 <= index < self.notebook.index("end"):
+                    self._selected_tab_index = index
+                    return index
+        if 0 <= self._selected_tab_index < self.notebook.index("end"):
+            return self._selected_tab_index
+        self._selected_tab_index = 0
+        return 0
+
+    def _select_top_tab(self, index: int) -> None:
+        if not 0 <= index < self.notebook.index("end"):
+            index = 0
+        self._changing_tab_programmatically = True
+        try:
+            self.notebook.select(index)
+            self._selected_tab_index = index
+        finally:
+            self._changing_tab_programmatically = False
+
+    def _set_top_notebook_busy(self, busy: bool) -> None:
+        selected = self._selected_top_tab()
+        self._changing_tab_programmatically = True
+        try:
+            self.notebook.state(["!disabled"])
+            for index in range(self.notebook.index("end")):
+                self.notebook.tab(index, state="normal")
+            self.notebook.select(selected)
+            if busy:
+                self.notebook.state(["disabled"])
+        finally:
+            self._changing_tab_programmatically = False
 
     def current_pdf_request(self) -> PdfOrganizationRequest:
         input_dir = Path(self.pdf_input.get())
@@ -1056,8 +1148,8 @@ class TkView:
                 widget.configure(state="disabled" if model.busy else "normal")
             except tk.TclError:
                 pass
-        for index in range(3):
-            self.notebook.tab(index, state="disabled" if model.busy else "normal")
+        self.recruit_panel.set_host_busy(model.busy)
+        self._set_top_notebook_busy(model.busy)
         self._render_pdf_plan(model.pdf_plan, model.pdf_output_mode)
         self._render_export_plan(model.export_plan)
         self._render_report_plan(model.report_plan)
@@ -1244,9 +1336,10 @@ class TkView:
             )
 
     def post(self, callback) -> None:
-        self.root.after(0, callback)
+        self._dispatcher.post(callback)
 
     def close(self) -> None:
+        self._dispatcher.close()
         self.root.destroy()
 
 

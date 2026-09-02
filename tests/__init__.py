@@ -1,0 +1,1 @@
+"""Combined application test suite."""

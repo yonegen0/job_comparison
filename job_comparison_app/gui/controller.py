@@ -19,6 +19,8 @@ from .pdf_outputs import (
     OutputConflictChoice, discover_legacy_main_csv_candidates, inspect_output_conflict,
     resolve_numbered_output_paths, validate_legacy_csv,
 )
+from .recruit_feature import RecruitFeatureCoordinator, RecruitFeaturePanel
+from recruit_job_tool.models import JobSource
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +87,17 @@ class Controller:
                  output_opener: OutputOpener, task_runner: TaskRunner | None = None) -> None:
         self.view, self.application, self.output_opener = view, application, output_opener
         self.task_runner = task_runner or ExecutorTaskRunner()
+        self._recruit_busy = False
+        recruit_panel = getattr(view, "recruit_panel", None)
+        self.recruit = (
+            RecruitFeatureCoordinator(
+                panel=recruit_panel,
+                task_runner=self.task_runner,
+                on_global_state=self._recruit_state_changed,
+            )
+            if isinstance(recruit_panel, RecruitFeaturePanel)
+            else None
+        )
         self.model = ViewModel()
         self._operation_token = 0
         self._pdf_choice: OutputConflictChoice | None = None
@@ -100,6 +113,25 @@ class Controller:
 
     def start(self) -> None:
         self.view.render(self.model)
+        if self.recruit is not None:
+            self.view.post(self.recruit.probe)
+
+    def _recruit_state_changed(self, busy: bool, status: str, tone: str) -> None:
+        was_busy = self._recruit_busy
+        self._recruit_busy = busy
+        if busy or was_busy or not self.model.busy:
+            self.model = replace(self.model, busy=busy, status=status, tone=tone)
+            self.view.render(self.model)
+
+    def recruit_action(self, action: str) -> None:
+        if self.recruit is None:
+            return
+        if action == "select_jobins":
+            self.recruit.forward("select_tab", JobSource.JOBINS)
+        elif action == "select_careerbank":
+            self.recruit.forward("select_tab", JobSource.CAREERBANK)
+        else:
+            self.recruit.forward(action)
 
     def invalidate_pdf(self) -> None:
         if self.model.busy: return
@@ -366,6 +398,8 @@ class Controller:
     def request_close(self) -> None:
         if self.model.busy:
             self.view.show_warning("処理中です", "処理が完了してから終了してください。"); return
+        if self.recruit is not None:
+            self.recruit.shutdown()
         self.task_runner.shutdown(); self.view.close()
 
     def _submit(self, status: str, callback: Callable[[], T], on_success: Callable[[T], None], *,

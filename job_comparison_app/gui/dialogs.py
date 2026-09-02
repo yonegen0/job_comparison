@@ -25,6 +25,15 @@ _BLOCKED_SHORTCUTS = (
     "<Control-Key-1>",
     "<Control-Key-2>",
     "<Control-Key-3>",
+    "<Control-Key-4>",
+    "<Alt-j>",
+    "<Alt-c>",
+    "<Control-o>",
+    "<Control-i>",
+    "<Control-e>",
+    "<Control-r>",
+    "<Control-g>",
+    "<Control-Shift-O>",
     "<F1>",
     "<F5>",
 )
@@ -101,6 +110,45 @@ class DialogPresenter:
                     default=messagebox.CANCEL,
                 )
             )
+
+    def choose(
+        self,
+        title: str,
+        message: str,
+        *,
+        actions: tuple[DialogAction, ...],
+        cancel_result: object,
+    ) -> object:
+        """Show an application-owned multi-choice confirmation dialog."""
+
+        try:
+            return self._show_dialog(
+                DialogKind.CONFIRM,
+                title,
+                message,
+                actions=actions,
+                cancel_result=cancel_result,
+            )
+        except tk.TclError:
+            if len(actions) == 2:
+                accepted = messagebox.askokcancel(
+                    title,
+                    message,
+                    parent=self.root,
+                    default=messagebox.CANCEL,
+                )
+                return actions[1].result if accepted else cancel_result
+            result = messagebox.askyesnocancel(
+                title,
+                message,
+                parent=self.root,
+                default=messagebox.CANCEL,
+            )
+            if result is True:
+                return actions[-1].result
+            if result is False and len(actions) >= 3:
+                return actions[-2].result
+            return cancel_result
 
     def ask_output_conflict(self, title: str, message: str) -> OutputConflictChoice:
         actions = (
@@ -200,20 +248,24 @@ class DialogPresenter:
     def show_help(self, title: str) -> None:
         sections = (
             (
-                "1. 求人PDF整理",
+                "1. 求人取得",
+                "JoBinsまたはCareerBankで保存した検索結果HTMLを取り込みます。置換、追加・更新、CSV再出力、直前状態への復元、AI比較用JSONの作成ができます。求人媒体やAIへ自動接続しません。",
+            ),
+            (
+                "2. 求人PDF整理",
                 "PDFフォルダーを選択し、必要ならJSON出力フォルダーを指定します。事前確認ではファイルやフォルダーを変更しません。旧求人情報CSVは初回だけJSONへ取り込めます。",
             ),
             (
-                "2. 求人PDF全文統合テキスト化",
+                "3. 求人PDF全文統合テキスト化",
                 "PDFフォルダーを選択して事前確認し、Markdownを生成します。OCR、要約、本文補正は行いません。求人情報JSONと統合Markdownは別AIへの添付に利用できます。",
             ),
             (
-                "3. 比較資料PDF生成",
+                "4. 比較資料PDF生成",
                 "比較Markdownと元PDF対応JSONを選択し、事前確認後にPDFを生成します。EdgeまたはChromeが必要です。",
             ),
             (
-                "4. 補足とショートカット",
-                "警告付き完了は異常終了ではありません。Ctrl+1 / Ctrl+2 / Ctrl+3: タブ切替、F5: 事前確認、F1: 使い方。",
+                "5. 補足とショートカット",
+                "警告付き完了は異常終了ではありません。Ctrl+1～4: タブ切替、Alt+J / Alt+C: 求人媒体切替、F5: PDF系タブの事前確認、F1: 使い方。求人取得のAI用JSONとPDF整理JSONは別形式です。",
             ),
         )
         try:

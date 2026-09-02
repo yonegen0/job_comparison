@@ -4,19 +4,35 @@ import tkinter as tk
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from job_comparison_app.gui.controller import ViewModel
 from job_comparison_app.gui.view import TkView, WindowsOutputOpener
+from recruit_job_tool.gui.controller import (
+    GlobalPhase as RecruitGlobalPhase,
+    ProviderViewModel,
+    ViewModel as RecruitViewModel,
+)
+from recruit_job_tool.models import JobSource
 
 
-def test_view_constructs_three_tabs_and_platform_adapter(tk_window) -> None:
+def test_view_constructs_four_tabs_and_platform_adapter(tk_window) -> None:
     root = tk_window
     root.withdraw()
     try:
         view = TkView(root)
-        assert view.notebook.index("end") == 3
-        assert view.notebook.tab(0, "text") == "求人PDF整理"
-        assert view.notebook.tab(1, "text") == "求人PDF全文統合テキスト化"
-        assert view.notebook.tab(2, "text") == "比較資料PDF生成"
+        assert view.notebook.index("end") == 4
+        assert view.notebook.tab(0, "text") == "求人取得"
+        assert view.notebook.tab(1, "text") == "求人PDF整理"
+        assert view.notebook.tab(2, "text") == "求人PDF全文統合テキスト化"
+        assert view.notebook.tab(3, "text") == "比較資料PDF生成"
+        assert view.notebook.select()
+        assert view.notebook.index(view.notebook.select()) == 0
+        assert view.recruit_panel.provider_notebook.index("end") == 2
+        assert view.recruit_panel.provider_notebook.select()
+        assert view.recruit_panel.provider_notebook.index(
+            view.recruit_panel.provider_notebook.select()
+        ) == 0
         assert isinstance(WindowsOutputOpener(), WindowsOutputOpener)
     finally:
         root.destroy()
@@ -60,11 +76,12 @@ def test_minimum_window_keeps_four_result_rows_reachable_by_tab_scroll(tk_window
     try:
         view = TkView(root)
         root.geometry("760x600")
+        view.notebook.select(1)
         root.update()
 
         rowheight = int(view.style.lookup("App.Treeview", "rowheight"))
         assert view.pdf_tree.winfo_height() >= rowheight * 4
-        view.notebook.select(2)
+        view.notebook.select(3)
         root.update()
         assert view.report_tree.winfo_height() >= rowheight * 4
     finally:
@@ -83,10 +100,10 @@ def test_render_busy_hides_interaction_but_keeps_exit_available(tk_window) -> No
         assert str(view.help_button.cget("state")) == "disabled"
         assert str(view.close_button.cget("state")) == "normal"
         assert view.help_menu.entrycget(0, "state") == "disabled"
-        assert view.notebook.tab(0, "state") == "disabled"
-        assert view.notebook.tab(1, "state") == "disabled"
-        assert view.notebook.tab(2, "state") == "disabled"
+        assert view.notebook.instate(["disabled"])
+        assert all(view.notebook.tab(index, "state") == "normal" for index in range(4))
         selected = view.notebook.select()
+        assert selected
         view._shortcut_tab(1)
         assert view.notebook.select() == selected
 
@@ -94,6 +111,119 @@ def test_render_busy_hides_interaction_but_keeps_exit_available(tk_window) -> No
         root.update_idletasks()
         assert view.progress.winfo_manager() == ""
         assert view.help_menu.entrycget(0, "state") == "normal"
+        assert view.notebook.instate(["!disabled"])
+        assert view.notebook.select() == selected
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("selected_index", range(4))
+def test_top_tab_selection_survives_busy_round_trip(
+    tk_window, selected_index: int
+) -> None:
+    root = tk_window
+    root.withdraw()
+    try:
+        view = TkView(root)
+        view._shortcut_tab(selected_index)
+        selected = view.notebook.select()
+
+        view.render(ViewModel(busy=True, status="処理中です。"))
+        root.update_idletasks()
+        assert view.notebook.select() == selected
+        assert view.notebook.instate(["disabled"])
+
+        view.render(ViewModel())
+        root.update_idletasks()
+        assert view.notebook.select() == selected
+        assert view.notebook.index(view.notebook.select()) == selected_index
+        assert view.notebook.instate(["!disabled"])
+    finally:
+        root.destroy()
+
+
+def test_render_repairs_an_empty_top_tab_selection(tk_window) -> None:
+    root = tk_window
+    root.withdraw()
+    try:
+        view = TkView(root)
+        for index in range(4):
+            view.notebook.tab(index, state="disabled")
+        root.update_idletasks()
+        assert view.notebook.select() == ""
+
+        view.render(ViewModel())
+        root.update_idletasks()
+
+        assert view.notebook.select()
+        assert view.notebook.index(view.notebook.select()) == 0
+        assert view._shortcut_preview() == "break"
+        assert view._shortcut_recruit("choose_html") == "break"
+    finally:
+        root.destroy()
+
+
+def _recruit_model(*, active: JobSource, busy: bool) -> RecruitViewModel:
+    return RecruitViewModel(
+        phase=RecruitGlobalPhase.BUSY if busy else RecruitGlobalPhase.IDLE,
+        active_provider=active,
+        providers={
+            provider: ProviderViewModel(provider=provider) for provider in JobSource
+        },
+        status_text="状態を確認しています。" if busy else "操作を選んでください。",
+        busy=busy,
+    )
+
+
+def test_provider_tab_selection_survives_recruit_and_host_busy(tk_window) -> None:
+    root = tk_window
+    root.withdraw()
+    try:
+        view = TkView(root)
+        panel = view.recruit_panel
+
+        panel.render(_recruit_model(active=JobSource.JOBINS, busy=True))
+        root.update_idletasks()
+        assert panel.provider_notebook.instate(["disabled"])
+        assert panel.notebook_provider() is JobSource.JOBINS
+        assert all(
+            panel.provider_notebook.tab(index, "state") == "normal"
+            for index in range(2)
+        )
+
+        panel.render(_recruit_model(active=JobSource.CAREERBANK, busy=False))
+        root.update_idletasks()
+        assert panel.provider_notebook.instate(["!disabled"])
+        assert panel.notebook_provider() is JobSource.CAREERBANK
+
+        selected = panel.provider_notebook.select()
+        panel.set_host_busy(True)
+        root.update_idletasks()
+        assert panel.provider_notebook.instate(["disabled"])
+        assert panel.provider_notebook.select() == selected
+
+        panel.set_host_busy(False)
+        root.update_idletasks()
+        assert panel.provider_notebook.instate(["!disabled"])
+        assert panel.notebook_provider() is JobSource.CAREERBANK
+    finally:
+        root.destroy()
+
+
+def test_provider_lookup_falls_back_when_selection_is_empty(tk_window) -> None:
+    root = tk_window
+    root.withdraw()
+    try:
+        view = TkView(root)
+        panel = view.recruit_panel
+        panel.render(_recruit_model(active=JobSource.CAREERBANK, busy=False))
+        for index in range(2):
+            panel.provider_notebook.tab(index, state="disabled")
+        root.update_idletasks()
+        assert panel.provider_notebook.select() == ""
+
+        assert panel.notebook_provider() is JobSource.CAREERBANK
+        panel._tab_changed(SimpleNamespace())
     finally:
         root.destroy()
 

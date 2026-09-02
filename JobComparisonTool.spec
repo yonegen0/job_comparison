@@ -10,7 +10,7 @@ analysis = Analysis(
     ],
     hiddenimports=[
         "tkinter", "tkinter.ttk", "tkinter.filedialog", "tkinter.messagebox",
-        "pypdf", "pdf_job_exporter", "_cffi_backend",
+        "pypdf", "pdf_job_exporter", "recruit_job_tool", "_cffi_backend",
         "cryptography.hazmat.bindings._rust",
     ],
     hookspath=[],

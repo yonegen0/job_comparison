@@ -90,11 +90,12 @@ def test_help_contains_steps_and_long_notice_scrolls(tk_window) -> None:
         _schedule_dialog(root, inspect_help)
         presenter.show_help("使い方")
         combined = "\n".join(texts)
-        assert "1. 求人PDF整理" in combined
-        assert "2. 求人PDF全文統合テキスト化" in combined
-        assert "3. 比較資料PDF生成" in combined
-        assert "4. 補足とショートカット" in combined
-        assert "Ctrl+1" in combined
+        assert "1. 求人取得" in combined
+        assert "2. 求人PDF整理" in combined
+        assert "3. 求人PDF全文統合テキスト化" in combined
+        assert "4. 比較資料PDF生成" in combined
+        assert "5. 補足とショートカット" in combined
+        assert "Ctrl+1～4" in combined
 
         observed = {}
 

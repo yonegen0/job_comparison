@@ -37,7 +37,7 @@ def test_modern_palette_styles_cards_and_focus_layouts(tk_window) -> None:
         assert view.visuals.palette == visuals.MODERN_PALETTE
         assert view.visuals.rounded_metrics == (12, 1, 29)
         assert view.visuals.rounded_artwork is not None
-        assert len(view.visuals.cards) == 15
+        assert len(view.visuals.cards) == 26
         for color in (
             visuals.MODERN_PALETTE.text,
             visuals.MODERN_PALETTE.muted,

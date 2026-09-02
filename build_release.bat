@@ -36,7 +36,7 @@ if not defined APP_VERSION (
 
 ".venv-build\Scripts\python.exe" -m pytest tests -q -p no:cacheprovider --basetemp ".venv-build\pytest-temp"
 if errorlevel 1 exit /b 1
-".venv-build\Scripts\python.exe" -m compileall -q job_comparison_app job_pdf_tool job_comparison_report pdf_job_exporter tests
+".venv-build\Scripts\python.exe" -m compileall -q job_comparison_app job_pdf_tool job_comparison_report pdf_job_exporter recruit_job_tool tests
 if errorlevel 1 exit /b 1
 ".venv-build\Scripts\python.exe" -m PyInstaller --clean --noconfirm JobComparisonTool.spec
 if errorlevel 1 exit /b 1

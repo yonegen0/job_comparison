@@ -1,14 +1,21 @@
-# 求人比較ツール 0.2.0
+# 求人比較ツール 0.3.1
 
-求人PDFの整理、全文Markdown統合、10求人の比較資料PDF生成を、1つのWindows GUIで行う完全ローカルツールです。外部サービスへファイルを送信しません。
+JoBins／CareerBankの保存済み検索結果HTML取込、求人PDFの整理、全文Markdown統合、10求人の比較資料PDF生成を、1つのWindows GUIで行う完全ローカルツールです。求人媒体や外部サービスへ自動接続せず、ファイルを送信しません。
 
-## GUIの3タブ
+## GUIの4タブ
 
-1. 「求人PDF整理」: PDFを解析し、改名内容、`求人情報.json`、`処理レポート.json`を事前確認してから一括確定します。
-2. 「求人PDF全文統合テキスト化」: 選択フォルダー直下のPDF本文を、境界マーカー付きの`output\PDF全文_統合テキスト化.md`へ統合します。OCR、要約、補正は行いません。
-3. 「比較資料PDF生成」: 比較Markdownと元PDF対応JSONを照合し、A4縦12ページのPDF、検証済みMarkdown、検証結果CSVを生成します。
+1. 「求人取得」: 保存済みJoBins／CareerBank検索結果HTMLを取り込み、媒体別CSV、直前状態、AI比較用JSONと任意ガイドを管理します。
+2. 「求人PDF整理」: PDFを解析し、改名内容、`求人情報.json`、`処理レポート.json`を事前確認してから一括確定します。
+3. 「求人PDF全文統合テキスト化」: 選択フォルダー直下のPDF本文を、境界マーカー付きの`output\PDF全文_統合テキスト化.md`へ統合します。OCR、要約、補正は行いません。
+4. 「比較資料PDF生成」: 比較Markdownと元PDF対応JSONを照合し、A4縦12ページのPDF、検証済みMarkdown、検証結果CSVを生成します。
 
 各工程の「事前確認」はファイルや`output`フォルダーを作成しません。本実行時も必ず最新状態をprepareし、確認後のPDF・JSON・旧CSV・Markdown変更は`CHANGED001`として停止します。
+
+## 求人取得と既存データ
+
+初回は「求人取得」タブの案内から初期設定を開始します。独立版で作成済みの`%LOCALAPPDATA%\RecruitJobTool`をそのまま再利用し、旧版フォルダーから移行する場合も移行元を変更・削除しません。独立版が起動中の場合は求人取得だけを停止し、PDF関連の3タブは引き続き利用できます。
+
+求人取得のAI用JSONは`job-comparison-jobs-v4`です。PDF整理の`job-comparison/job-info`や比較資料用manifestとは別形式であり、自動変換・自動受け渡しは行いません。
 
 ## JSON出力と旧CSV移行
 
@@ -37,7 +44,7 @@ py job_pdf_tool.py --input "C:\求人PDF" --apply --import-main-csv "C:\旧\求�
 ## 配布
 
 - EXE: `JobComparisonTool.exe`
-- ZIP: `release\JobComparisonTool-0.2.0-win-x64.zip`
-- checksum: `release\SHA256SUMS-0.2.0.txt`
+- ZIP: `release\JobComparisonTool-0.3.1-win-x64.zip`
+- checksum: `release\SHA256SUMS-0.3.1.txt`
 
 比較資料PDF生成にはEdgeまたはChromeが必要です。配布物には実求人PDF、JSON、CSV、Markdown、manifest、単体Exporter EXEを含めません。

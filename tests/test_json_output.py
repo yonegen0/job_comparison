@@ -35,6 +35,26 @@ def test_job_key_outside_field_order_is_rejected(tmp_path: Path) -> None:
         load_job_info_json(path)
 
 
+def test_recruit_analysis_json_is_rejected_by_pdf_job_info_loader(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recruit-analysis.json"
+    path.write_text(
+        json.dumps(
+            {
+                "format": "job-comparison-jobs-v4",
+                "provider": "jobins",
+                "generated_at": "2026-09-02T00:00:00+09:00",
+                "jobs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_job_info_json(path)
+
+
 def test_processing_report_page_accepts_positive_int_or_null(tmp_path: Path) -> None:
     record = {field: "" for field in PROCESS_REPORT_FIELDS}; record["ページ"] = None
     data = {"format": "job-comparison/processing-report", "format_version": 1,

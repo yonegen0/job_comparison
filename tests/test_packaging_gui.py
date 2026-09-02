@@ -30,6 +30,7 @@ def test_spec_is_windowed_onedir_and_bundles_templates() -> None:
     assert "report.html" in text
     assert "report.css" in text
     assert '"pdf_job_exporter"' in text
+    assert '"recruit_job_tool"' in text
     assert '"_cffi_backend"' in text
     assert "cryptography.hazmat.bindings._rust" in text
 
@@ -37,13 +38,21 @@ def test_spec_is_windowed_onedir_and_bundles_templates() -> None:
 def test_project_and_package_versions_match() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     init_text = (ROOT / "job_comparison_app" / "__init__.py").read_text(encoding="utf-8")
+    recruit_init_text = (ROOT / "recruit_job_tool" / "__init__.py").read_text(encoding="utf-8")
     match = re.search(r'^__version__ = "([^"]+)"$', init_text, re.MULTILINE)
+    recruit_match = re.search(r'^__version__ = "([^"]+)"$', recruit_init_text, re.MULTILINE)
     assert match is not None
-    assert project["project"]["version"] == "0.2.0"
+    assert recruit_match is not None
+    assert project["project"]["version"] == "0.3.1"
     assert match.group(1) == project["project"]["version"]
+    assert recruit_match.group(1) == project["project"]["version"]
+    assert project["project"]["gui-scripts"] == {
+        "JobComparisonTool": "job_comparison_app.gui.__main__:main"
+    }
     assert project["project"]["dependencies"] == [
         "pypdf[crypto]==6.16.1", "cryptography==50.0.1", "cffi==2.1.1", "pycparser==3.0"
     ]
+    assert "recruit_job_tool*" in project["tool"]["setuptools"]["packages"]["find"]["include"]
 
 
 def test_build_dependencies_are_pinned() -> None:
@@ -82,7 +91,7 @@ def test_release_contract_excludes_user_data() -> None:
     ):
         assert token in checks
     readme = (ROOT / "はじめにお読みください.txt").read_text(encoding="utf-8")
-    assert "求人比較ツール 0.2.0" in readme
+    assert "求人比較ツール 0.3.1" in readme
 
 
 def test_release_zip_has_allowlisted_files_at_archive_root() -> None:
