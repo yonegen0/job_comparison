@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from recruit_job_tool.app_paths import AppPaths
 from recruit_job_tool.application import ProviderHealth, RecruitJobApplication
+from recruit_job_tool.candidate_profile import CandidateProfile
 from recruit_job_tool.constants import MAX_CURRENT_JOBS
 from recruit_job_tool.csv_exporter import CsvExporter
 from recruit_job_tool.models import JobSource
@@ -284,6 +285,33 @@ class ApplicationTests(unittest.TestCase):
         self.assertIn("_analysis_guide_", result.guide_path.stem)
         self.assertIn("_analysis_jobs_", result.json_path.stem)
         self.assertEqual(result.guide_path.parent, self.input_dir / "output")
+
+    def test_candidate_analysis_uses_common_sequence_and_keeps_json_profile_free(self) -> None:
+        self.app.import_saved_html(
+            provider=JobSource.JOBINS,
+            input_path=self.fixture("jobins_search_results.html"),
+            mode=ImportMode.REPLACE,
+        )
+        profile = CandidateProfile(
+            age="34歳",
+            gender="回答しない",
+            education="4年制大学卒業",
+            work_history="営業",
+            qualifications="普通運転免許",
+        )
+        first = self.app.create_analysis_files(
+            provider=JobSource.JOBINS,
+            candidate_profile=profile,
+        )
+        second = self.app.create_analysis_files(
+            provider=JobSource.JOBINS,
+            candidate_profile=profile,
+        )
+        assert first.json_path.stem.replace("_jobs_", "_") == first.guide_path.stem.replace("_guide_", "_")
+        assert second.json_path.stem.endswith("_01")
+        assert second.guide_path.stem.endswith("_01")
+        assert "34歳" not in first.json_path.read_text(encoding="utf-8")
+        assert "34歳" in first.guide_path.read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

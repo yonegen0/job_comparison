@@ -11,7 +11,13 @@ from recruit_job_tool.application import (
     ProviderHealth,
     ProviderStatus,
 )
-from recruit_job_tool.gui.controller import AI_REQUEST_TEXT, Controller
+from recruit_job_tool.candidate_profile import CandidateProfile
+from recruit_job_tool.gui.controller import (
+    AI_REQUEST_TEXT,
+    CANDIDATE_AI_REQUEST_TEXT,
+    CandidateProfileDecision,
+    Controller,
+)
 from recruit_job_tool.models import JobSource
 from recruit_job_tool.workflow import ImportMode
 
@@ -52,6 +58,7 @@ class FakeView:
         self.dialogs = []
         self.copied = None
         self.closed = False
+        self.candidate_decision = CandidateProfileDecision(proceed=True)
 
     def render(self, model): self.models.append(model)
     def ask_replace(self, spec): self.dialogs.append(spec); return True
@@ -60,6 +67,7 @@ class FakeView:
     def show_warning(self, spec): self.dialogs.append(spec)
     def show_error(self, spec): self.dialogs.append(spec)
     def show_analysis_result(self, spec): self.dialogs.append(spec)
+    def request_candidate_profile(self): return self.candidate_decision
     def focus(self, control_id): pass
     def post(self, callback): callback()
     def copy_text(self, text): self.copied = text
@@ -82,8 +90,8 @@ class FakeApplication:
     def import_saved_html(self, *, provider, input_path, mode):
         self.calls.append((provider, input_path, mode))
         return ImportResult(provider, mode, 2, 2, Path("jobs.csv"), True, ())
-    def create_analysis_files(self, *, provider):
-        self.calls.append((provider, "analysis"))
+    def create_analysis_files(self, *, provider, candidate_profile=None):
+        self.calls.append((provider, "analysis", candidate_profile))
         return AnalysisGenerationResult(
             provider, 1, 1, Path("safe_jobs.json"), Path("safe_guide.md"), 10, 10, ()
         )
@@ -151,6 +159,37 @@ class ControllerTests(unittest.TestCase):
         controller.start()
         controller.generate_analysis()
         self.assertEqual(self.app.calls[-1][1], "analysis")
+
+    def test_candidate_snapshot_is_passed_and_changes_completion_copy(self) -> None:
+        controller = self.make_controller()
+        profile = CandidateProfile(
+            age="34歳",
+            gender="回答しない",
+            education="4年制大学卒業",
+            work_history="営業",
+            qualifications="普通運転免許",
+        )
+        self.view.candidate_decision = CandidateProfileDecision(True, profile)
+        controller.start()
+        controller.generate_analysis()
+        self.assertIs(self.app.calls[-1][2], profile)
+        self.assertTrue(self.view.dialogs[-1].candidate_applied)
+        controller.copy_ai_request()
+        self.assertEqual(self.view.copied, CANDIDATE_AI_REQUEST_TEXT)
+        self.assertNotIn("34歳", self.view.copied)
+
+    def test_candidate_cancel_does_not_start_worker_or_busy(self) -> None:
+        runner = PendingRunner()
+        controller = self.make_controller(runner)
+        controller.start()
+        runner.future.set_result({
+            provider: status(provider) for provider in JobSource
+        })
+        self.view.candidate_decision = CandidateProfileDecision(False)
+        calls_before = list(self.app.calls)
+        controller.generate_analysis()
+        self.assertEqual(self.app.calls, calls_before)
+        self.assertFalse(controller.model.busy)
 
     def test_open_output_folder_uses_active_provider_location(self) -> None:
         controller = self.make_controller()

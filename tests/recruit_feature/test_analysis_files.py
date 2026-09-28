@@ -15,8 +15,10 @@ from recruit_job_tool.analysis_prompt.models import (
 )
 from recruit_job_tool.analysis_prompt.renderer import (
     render_analysis_guide,
+    render_candidate_analysis_guide,
     render_job_data_json_v4,
 )
+from recruit_job_tool.candidate_profile import CandidateProfile
 from recruit_job_tool.analysis_prompt.service import generate_analysis_files
 from recruit_job_tool.csv_exporter import CsvExporter
 from recruit_job_tool.errors import PromptInputError
@@ -95,8 +97,89 @@ class AnalysisV4RendererTests(unittest.TestCase):
         self.assertNotIn("job_data_sha256", guide)
         self.assertNotIn("必須条件ゲート", guide)
 
+    def test_v9_guide_renders_candidate_as_safe_markdown_once(self) -> None:
+        guide = render_candidate_analysis_guide(
+            candidate_profile=CandidateProfile(
+                age="34歳",
+                gender="回答しない",
+                education="4年制大学卒業",
+                work_history="法人営業\n\n# 見出し\n---\n```\n<!-- comment -->",
+                qualifications="",
+            )
+        )
+        self.assertTrue(guide.startswith(
+            "---\nprompt_template_version: job-comparison-v9\n---\n\n"
+            "# 求人JSON 転職者条件付き比較ガイド\n"
+        ))
+        self.assertEqual(guide.splitlines().count("## 転職者条件"), 1)
+        self.assertIn("- 年齢: 34歳\n- 性別: 回答しない\n- 学歴: 4年制大学卒業", guide)
+        self.assertIn(
+            "> 法人営業\n>\n> # 見出し\n> ---\n> ```\n> <!-- comment -->",
+            guide,
+        )
+        self.assertIn("### 資格\n\n> 記載なし", guide)
+        self.assertIn("採点対象", guide)
+        self.assertIn("保留", guide)
+        self.assertIn("除外", guide)
+        self.assertNotIn("candidate_profile_format", guide)
+        self.assertNotIn("candidate_profile_sha256", guide)
+        self.assertTrue(guide.endswith("\n"))
+        self.assertNotIn("\r", guide)
+
 
 class AnalysisGenerationTests(unittest.TestCase):
+    def test_candidate_mode_publishes_v4_json_and_v9_guide_together(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            csv_path = CsvExporter(directory).export(
+                JobSource.JOBINS,
+                [make_job(
+                    source_job_id="one",
+                    source_url="https://jobins.jp/agent/jobs/one",
+                )],
+            )
+            profile = CandidateProfile(
+                age="34歳",
+                gender="回答しない",
+                education="4年制大学卒業",
+                qualifications="普通運転免許",
+            )
+            result = generate_analysis_files(
+                input_path=csv_path,
+                json_output_path=directory / "jobs.json",
+                guide_output_path=directory / "guide.md",
+                provider=JobSource.JOBINS,
+                candidate_profile=profile,
+            )
+            self.assertEqual(json.loads(result.json_path.read_text(encoding="utf-8"))["format"], "job-comparison-jobs-v4")
+            self.assertNotIn("34歳", result.json_path.read_text(encoding="utf-8"))
+            self.assertIn("34歳", result.guide_path.read_text(encoding="utf-8"))
+            self.assertEqual(result.warnings, ())
+
+    def test_candidate_mode_rejects_missing_guide_before_json_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            csv_path = CsvExporter(directory).export(
+                JobSource.JOBINS,
+                [make_job(
+                    source_job_id="one",
+                    source_url="https://jobins.jp/agent/jobs/one",
+                )],
+            )
+            with self.assertRaises(Exception):
+                generate_analysis_files(
+                    input_path=csv_path,
+                    json_output_path=directory / "jobs.json",
+                    provider=JobSource.JOBINS,
+                    include_guide=False,
+                    candidate_profile=CandidateProfile(
+                        age="34歳",
+                        gender="回答しない",
+                        education="4年制大学卒業",
+                    ),
+                )
+            self.assertFalse((directory / "jobs.json").exists())
+
     def test_json_succeeds_without_guide(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)

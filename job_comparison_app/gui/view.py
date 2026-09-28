@@ -10,12 +10,15 @@ from tkinter import filedialog, ttk
 from job_comparison_report.service import ReportBuildPlan, ReportBuildRequest
 from job_pdf_tool.service import PdfOrganizationPlan, PdfOrganizationRequest
 from pdf_job_exporter.service import PdfTextExportPlan, PdfTextExportRequest
+from recruit_job_tool.candidate_profile import _CandidateProfileFieldError
+from recruit_job_tool.gui.controller import CandidateProfileDecision
 
 from job_comparison_app import __version__
 
+from .candidate_conditions import CandidateConditionsPanel
 from .controller import Controller, ViewModel
 from .dispatcher import MainThreadDispatcher
-from .dialogs import DialogKind, DialogPresenter
+from .dialogs import DialogAction, DialogKind, DialogPresenter
 from .export_outputs import ExportOutputConflict, resolve_export_output
 from .pdf_outputs import (
     LegacyCsvMigrationChoice, OrganizationOutputConflict, OutputConflictChoice,
@@ -54,6 +57,13 @@ from .visuals import (
     STYLE_WARNING,
     VisualManager,
 )
+
+
+TAB_CANDIDATE = 0
+TAB_RECRUIT = 1
+TAB_PDF = 2
+TAB_EXPORT = 3
+TAB_REPORT = 4
 
 
 class WindowsOutputOpener:
@@ -123,6 +133,7 @@ class TkView:
         self.root.bind("<Control-Key-2>", lambda event: self._shortcut_tab(1))
         self.root.bind("<Control-Key-3>", lambda event: self._shortcut_tab(2))
         self.root.bind("<Control-Key-4>", lambda event: self._shortcut_tab(3))
+        self.root.bind("<Control-Key-5>", lambda event: self._shortcut_tab(4))
         self.root.bind("<Alt-j>", lambda event: self._shortcut_recruit("select_jobins"))
         self.root.bind("<Alt-c>", lambda event: self._shortcut_recruit("select_careerbank"))
         self.root.bind("<Control-o>", lambda event: self._shortcut_recruit("choose_html"))
@@ -182,7 +193,7 @@ class TkView:
         )
         ttk.Label(
             header,
-            text="求人HTMLの取り込みからPDF整理・比較資料生成まで、1つの画面で行います。",
+            text="転職者条件の入力から求人取得・PDF整理・比較資料生成まで、1つの画面で行います。",
             style=STYLE_SUBTITLE,
         ).grid(row=0, column=1, sticky="sw", padx=(16, 0))
         ttk.Label(
@@ -198,22 +209,30 @@ class TkView:
 
         self.notebook = ttk.Notebook(self.root, style=STYLE_NOTEBOOK)
         self.notebook.grid(row=2, column=0, sticky="nsew", padx=20, pady=(4, 4))
+        self.candidate_tab_shell, self.candidate_tab = self._scrollable_tab()
         self.recruit_tab_shell, self.recruit_tab = self._scrollable_tab()
         self.pdf_tab_shell, self.pdf_tab = self._scrollable_tab()
         self.export_tab_shell, self.export_tab = self._scrollable_tab()
         self.report_tab_shell, self.report_tab = self._scrollable_tab()
+        self.notebook.add(self.candidate_tab_shell, text="転職者条件")
         self.notebook.add(self.recruit_tab_shell, text="求人取得")
         self.notebook.add(self.pdf_tab_shell, text="求人PDF整理")
         self.notebook.add(self.export_tab_shell, text="求人PDF全文統合テキスト化")
         self.notebook.add(self.report_tab_shell, text="比較資料PDF生成")
         self.notebook.bind("<<NotebookTabChanged>>", self._top_tab_changed, add="+")
-        self._select_top_tab(0)
+        self._select_top_tab(TAB_CANDIDATE)
+        self.candidate_panel = CandidateConditionsPanel(
+            root=self.root,
+            parent=self.candidate_tab,
+            visuals=self.visuals,
+        )
         self.recruit_panel = RecruitFeaturePanel(
             root=self.root,
             parent=self.recruit_tab,
             visuals=self.visuals,
             dialogs=self.dialogs,
             post_callback=self.post,
+            candidate_profile_callback=self._resolve_candidate_profile,
         )
         self._build_pdf_tab()
         self._build_export_tab()
@@ -875,7 +894,7 @@ class TkView:
         if (
             not self._busy
             and self.controller is not None
-            and self._selected_top_tab() == 0
+            and self._selected_top_tab() == TAB_RECRUIT
         ):
             self.controller.recruit_action(action)
         return "break"
@@ -884,14 +903,47 @@ class TkView:
         if not self.controller:
             return
         selected = self._selected_top_tab()
-        if selected == 0:
-            return
-        if selected == 1:
+        if selected == TAB_PDF:
             self.controller.preview_pdf()
-        elif selected == 2:
+        elif selected == TAB_EXPORT:
             self.controller.preview_export()
-        else:
+        elif selected == TAB_REPORT:
             self.controller.preview_report()
+
+    def _resolve_candidate_profile(self) -> CandidateProfileDecision:
+        missing = self.candidate_panel.missing_required_fields()
+        if missing:
+            choice = self.dialogs.choose(
+                "転職者条件が未入力です",
+                "転職者条件の必須項目が未入力です。現在入力されている職歴・資格なども含め、"
+                "すべての転職者条件を無視して一般比較用ファイルを作成しますか？",
+                actions=(
+                    DialogAction(
+                        "転職者条件へ戻る",
+                        result="candidate",
+                        is_default=True,
+                    ),
+                    DialogAction(
+                        "一般比較として作成",
+                        result="general",
+                        primary=True,
+                    ),
+                ),
+                cancel_result="candidate",
+            )
+            if choice == "general":
+                self.candidate_panel.clear_errors()
+                return CandidateProfileDecision(proceed=True)
+            self._select_top_tab(TAB_CANDIDATE)
+            self.candidate_panel.show_missing_required(missing)
+            return CandidateProfileDecision(proceed=False)
+        try:
+            profile = self.candidate_panel.profile()
+        except _CandidateProfileFieldError as error:
+            self._select_top_tab(TAB_CANDIDATE)
+            self.candidate_panel.focus_field(error.field)
+            return CandidateProfileDecision(proceed=False)
+        return CandidateProfileDecision(proceed=True, profile=profile)
 
     def _top_tab_changed(self, event: tk.Event) -> None:
         del event
@@ -1148,6 +1200,7 @@ class TkView:
                 widget.configure(state="disabled" if model.busy else "normal")
             except tk.TclError:
                 pass
+        self.candidate_panel.set_host_busy(model.busy)
         self.recruit_panel.set_host_busy(model.busy)
         self._set_top_notebook_busy(model.busy)
         self._render_pdf_plan(model.pdf_plan, model.pdf_output_mode)
@@ -1343,4 +1396,13 @@ class TkView:
         self.root.destroy()
 
 
-__all__ = ["DialogPresenter", "TkView", "WindowsOutputOpener"]
+__all__ = [
+    "DialogPresenter",
+    "TAB_CANDIDATE",
+    "TAB_EXPORT",
+    "TAB_PDF",
+    "TAB_RECRUIT",
+    "TAB_REPORT",
+    "TkView",
+    "WindowsOutputOpener",
+]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "job-comparison-tool"
-version = "0.3.1"
+version = "0.4.0"
 description = "求人HTML取込・求人PDF整理・比較資料生成Windowsデスクトップツール"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"

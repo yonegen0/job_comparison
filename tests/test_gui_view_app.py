@@ -16,16 +16,17 @@ from recruit_job_tool.gui.controller import (
 from recruit_job_tool.models import JobSource
 
 
-def test_view_constructs_four_tabs_and_platform_adapter(tk_window) -> None:
+def test_view_constructs_five_tabs_and_platform_adapter(tk_window) -> None:
     root = tk_window
     root.withdraw()
     try:
         view = TkView(root)
-        assert view.notebook.index("end") == 4
-        assert view.notebook.tab(0, "text") == "求人取得"
-        assert view.notebook.tab(1, "text") == "求人PDF整理"
-        assert view.notebook.tab(2, "text") == "求人PDF全文統合テキスト化"
-        assert view.notebook.tab(3, "text") == "比較資料PDF生成"
+        assert view.notebook.index("end") == 5
+        assert view.notebook.tab(0, "text") == "転職者条件"
+        assert view.notebook.tab(1, "text") == "求人取得"
+        assert view.notebook.tab(2, "text") == "求人PDF整理"
+        assert view.notebook.tab(3, "text") == "求人PDF全文統合テキスト化"
+        assert view.notebook.tab(4, "text") == "比較資料PDF生成"
         assert view.notebook.select()
         assert view.notebook.index(view.notebook.select()) == 0
         assert view.recruit_panel.provider_notebook.index("end") == 2
@@ -76,12 +77,12 @@ def test_minimum_window_keeps_four_result_rows_reachable_by_tab_scroll(tk_window
     try:
         view = TkView(root)
         root.geometry("760x600")
-        view.notebook.select(1)
+        view.notebook.select(2)
         root.update()
 
         rowheight = int(view.style.lookup("App.Treeview", "rowheight"))
         assert view.pdf_tree.winfo_height() >= rowheight * 4
-        view.notebook.select(3)
+        view.notebook.select(4)
         root.update()
         assert view.report_tree.winfo_height() >= rowheight * 4
     finally:
@@ -101,7 +102,7 @@ def test_render_busy_hides_interaction_but_keeps_exit_available(tk_window) -> No
         assert str(view.close_button.cget("state")) == "normal"
         assert view.help_menu.entrycget(0, "state") == "disabled"
         assert view.notebook.instate(["disabled"])
-        assert all(view.notebook.tab(index, "state") == "normal" for index in range(4))
+        assert all(view.notebook.tab(index, "state") == "normal" for index in range(5))
         selected = view.notebook.select()
         assert selected
         view._shortcut_tab(1)
@@ -117,7 +118,7 @@ def test_render_busy_hides_interaction_but_keeps_exit_available(tk_window) -> No
         root.destroy()
 
 
-@pytest.mark.parametrize("selected_index", range(4))
+@pytest.mark.parametrize("selected_index", range(5))
 def test_top_tab_selection_survives_busy_round_trip(
     tk_window, selected_index: int
 ) -> None:
@@ -147,7 +148,7 @@ def test_render_repairs_an_empty_top_tab_selection(tk_window) -> None:
     root.withdraw()
     try:
         view = TkView(root)
-        for index in range(4):
+        for index in range(5):
             view.notebook.tab(index, state="disabled")
         root.update_idletasks()
         assert view.notebook.select() == ""
@@ -161,6 +162,59 @@ def test_render_repairs_an_empty_top_tab_selection(tk_window) -> None:
         assert view._shortcut_recruit("choose_html") == "break"
     finally:
         root.destroy()
+
+
+def test_candidate_form_resolution_handles_general_cancel_and_valid_profile(
+    tk_window,
+) -> None:
+    view = TkView(tk_window)
+    view._select_top_tab(1)
+    view.dialogs.choose = lambda *args, **kwargs: "candidate"
+    decision = view._resolve_candidate_profile()
+    assert not decision.proceed
+    assert view.notebook.index(view.notebook.select()) == 0
+    assert view.candidate_panel.errors["age"].get()
+    assert view.candidate_panel.errors["gender"].get()
+    assert view.candidate_panel.errors["education"].get()
+
+    view.dialogs.choose = lambda *args, **kwargs: "general"
+    decision = view._resolve_candidate_profile()
+    assert decision.proceed and decision.profile is None
+
+    view.candidate_panel.variables["age"].set("34歳")
+    view.candidate_panel.variables["gender"].set("回答しない")
+    view.candidate_panel.variables["education"].set("4年制大学卒業")
+    decision = view._resolve_candidate_profile()
+    assert decision.proceed
+    assert decision.profile is not None
+    assert decision.profile.age == "34歳"
+
+
+def test_recruit_shortcuts_only_run_on_recruit_tab_and_f5_is_explicit(
+    tk_window,
+) -> None:
+    view = TkView(tk_window)
+    calls: list[str] = []
+    view.controller = SimpleNamespace(
+        recruit_action=lambda action: calls.append(action),
+        preview_pdf=lambda: calls.append("pdf"),
+        preview_export=lambda: calls.append("export"),
+        preview_report=lambda: calls.append("report"),
+    )
+    view._select_top_tab(0)
+    view._shortcut_recruit("generate_analysis")
+    view._shortcut_preview()
+    assert calls == []
+
+    view._select_top_tab(1)
+    view._shortcut_recruit("generate_analysis")
+    view._shortcut_preview()
+    assert calls == ["generate_analysis"]
+
+    for index, expected in ((2, "pdf"), (3, "export"), (4, "report")):
+        view._select_top_tab(index)
+        view._shortcut_preview()
+        assert calls[-1] == expected
 
 
 def _recruit_model(*, active: JobSource, busy: bool) -> RecruitViewModel:

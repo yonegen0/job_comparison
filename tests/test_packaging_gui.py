@@ -43,7 +43,7 @@ def test_project_and_package_versions_match() -> None:
     recruit_match = re.search(r'^__version__ = "([^"]+)"$', recruit_init_text, re.MULTILINE)
     assert match is not None
     assert recruit_match is not None
-    assert project["project"]["version"] == "0.3.1"
+    assert project["project"]["version"] == "0.4.0"
     assert match.group(1) == project["project"]["version"]
     assert recruit_match.group(1) == project["project"]["version"]
     assert project["project"]["gui-scripts"] == {
@@ -91,7 +91,7 @@ def test_release_contract_excludes_user_data() -> None:
     ):
         assert token in checks
     readme = (ROOT / "はじめにお読みください.txt").read_text(encoding="utf-8")
-    assert "求人比較ツール 0.3.1" in readme
+    assert "求人比較ツール 0.4.0" in readme
 
 
 def test_release_zip_has_allowlisted_files_at_archive_root() -> None:

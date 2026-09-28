@@ -18,6 +18,7 @@ from recruit_job_tool.application import ProviderHealth, ProviderStatus, Recruit
 from recruit_job_tool.errors import AlreadyRunningError, RecruitJobToolError
 from recruit_job_tool.gui.controller import (
     AnalysisDialogSpec,
+    CandidateProfileDecision,
     Controller as RecruitController,
     DialogSpec,
     GlobalPhase,
@@ -88,12 +89,14 @@ class RecruitFeaturePanel:
         visuals: VisualManager,
         dialogs: DialogPresenter,
         post_callback: Callable[[Callable[[], None]], None],
+        candidate_profile_callback: Callable[[], CandidateProfileDecision],
     ) -> None:
         self.root = root
         self.parent = parent
         self.visuals = visuals
         self.dialogs = dialogs
         self._post_callback = post_callback
+        self._candidate_profile_callback = candidate_profile_callback
         self.controller: RecruitController | None = None
         self._state_callback: Callable[[RecruitControllerViewModel], None] | None = None
         self._initialize_command: Callable[[], None] | None = None
@@ -469,13 +472,24 @@ class RecruitFeaturePanel:
         self.dialogs.show(dialog_spec.title, dialog_spec.message, DialogKind.ERROR)
 
     def show_analysis_result(self, dialog_spec: AnalysisDialogSpec) -> None:
-        guide = dialog_spec.guide_basename or "作成できませんでした（JSONは利用できます）"
-        self.dialogs.show(
-            dialog_spec.title,
-            f"{dialog_spec.message}\n\n分析用JSON（必須）: {dialog_spec.json_basename}\n"
-            f"詳細ガイド（任意）: {guide}\n\n分析用JSONだけでAI比較を利用できます。",
-            DialogKind.SUCCESS,
-        )
+        if dialog_spec.candidate_applied:
+            guide = dialog_spec.guide_basename or "作成できませんでした"
+            message = (
+                f"{dialog_spec.message}\n\n分析用求人JSON（必須）: {dialog_spec.json_basename}\n"
+                f"転職者条件入りガイド（必須）: {guide}\n\n"
+                "AIへ2ファイルを一緒に添付してください。"
+            )
+        else:
+            guide = dialog_spec.guide_basename or "作成できませんでした（JSONは利用できます）"
+            message = (
+                f"{dialog_spec.message}\n\n分析用JSON（必須）: {dialog_spec.json_basename}\n"
+                f"詳細ガイド（任意）: {guide}\n\n"
+                "転職者条件は使用していません。分析用JSONだけでAI比較を利用できます。"
+            )
+        self.dialogs.show(dialog_spec.title, message, DialogKind.SUCCESS)
+
+    def request_candidate_profile(self) -> CandidateProfileDecision:
+        return self._candidate_profile_callback()
 
     def focus(self, control_id: str) -> None:
         key = "import_" if control_id == "import" else control_id

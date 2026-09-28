@@ -25,6 +25,7 @@ from .models import AnalysisGenerationResult, PromptGenerationResult
 from .renderer import (
     render_analysis_guide,
     render_analysis_prompt,
+    render_candidate_analysis_guide,
     render_job_data_json,
     render_job_data_json_v4,
 )
@@ -55,10 +56,13 @@ def generate_analysis_files(
     provider: JobSource,
     guide_output_path: Path | None = None,
     include_guide: bool = True,
+    candidate_profile: CandidateProfile | None = None,
     generated_at: datetime | None = None,
 ) -> AnalysisGenerationResult:
-    """JSONを必須、Markdownガイドを任意として独立公開する。"""
+    """一般比較は独立公開し、条件付き比較は2成果物を一括公開する。"""
 
+    if candidate_profile is not None and not include_guide:
+        raise PromptOutputError("転職者条件付き比較ではMarkdownガイドが必要です")
     if not include_guide and guide_output_path is not None:
         raise PromptOutputError(
             "ガイドを生成しない場合はMarkdown出力先を指定できません"
@@ -77,6 +81,31 @@ def generate_analysis_files(
         jobs=jobs,
     )
     expected_json = _load_generated_json(json_content)
+
+    if candidate_profile is not None:
+        if guide_file is None:
+            raise PromptOutputError("転職者条件付き比較のMarkdown出力先が未指定です")
+        guide_content = render_candidate_analysis_guide(
+            candidate_profile=candidate_profile
+        )
+        write_candidate_analysis_pair_atomic(
+            json_path=json_file,
+            json_content=json_content,
+            markdown_path=guide_file,
+            markdown_content=guide_content,
+            expected_json=expected_json,
+        )
+        return AnalysisGenerationResult(
+            provider=provider,
+            job_count=len(jobs),
+            company_count=company_count,
+            json_path=json_file,
+            guide_path=guide_file,
+            json_character_count=len(json_content),
+            guide_character_count=len(guide_content),
+            warnings=(),
+        )
+
     warnings = list(
         write_file_atomic(
             path=json_file,
@@ -258,8 +287,60 @@ def write_prompt_pair_atomic(
 ) -> None:
     """両出力を検証後に公開し、途中失敗時は旧状態へ戻す。"""
 
+    _write_pair_atomic(
+        markdown_path=markdown_path,
+        markdown_content=markdown_content,
+        json_path=json_path,
+        json_content=json_content,
+        verifier=_verify_published_pair,
+        artifact_label="分析プロンプト",
+    )
+
+
+def write_candidate_analysis_pair_atomic(
+    *,
+    markdown_path: Path,
+    markdown_content: str,
+    json_path: Path,
+    json_content: str,
+    expected_json: object,
+) -> None:
+    """v4求人JSONとv9条件付きガイドを1トランザクションで公開する。"""
+
+    def verify(
+        *,
+        markdown_artifact: _OutputArtifact,
+        json_artifact: _OutputArtifact,
+    ) -> None:
+        _verify_candidate_analysis_pair(
+            markdown_artifact=markdown_artifact,
+            json_artifact=json_artifact,
+            expected_json=expected_json,
+        )
+
+    _write_pair_atomic(
+        markdown_path=markdown_path,
+        markdown_content=markdown_content,
+        json_path=json_path,
+        json_content=json_content,
+        verifier=verify,
+        artifact_label="転職者条件付きAI比較ファイル",
+    )
+
+
+def _write_pair_atomic(
+    *,
+    markdown_path: Path,
+    markdown_content: str,
+    json_path: Path,
+    json_content: str,
+    verifier: Callable[..., None],
+    artifact_label: str,
+) -> None:
+    """2ファイルに共通するstage、backup、公開、rollbackを実行する。"""
+
     if not isinstance(markdown_content, str) or not isinstance(json_content, str):
-        raise PromptOutputError("分析プロンプトの出力内容が不正です")
+        raise PromptOutputError(f"{artifact_label}の出力内容が不正です")
 
     markdown_destination = _resolve_output_path(Path(markdown_path))
     json_destination = _resolve_output_path(Path(json_path))
@@ -296,13 +377,13 @@ def write_prompt_pair_atomic(
             raise
         if isinstance(error, PromptOutputError):
             raise
-        raise PromptOutputError("分析プロンプトの公開準備に失敗しました") from error
+        raise PromptOutputError(f"{artifact_label}の公開準備に失敗しました") from error
 
     try:
         for artifact in artifacts:
             os.replace(artifact.stage, artifact.destination)
             artifact.published = True
-        _verify_published_pair(
+        verifier(
             markdown_artifact=markdown_artifact,
             json_artifact=json_artifact,
         )
@@ -312,19 +393,19 @@ def write_prompt_pair_atomic(
         _cleanup_artifacts(artifacts, keep_backups=keep_backups)
         if rollback_failures:
             raise PromptOutputError(
-                "分析プロンプトの公開に失敗し、旧出力を完全に復旧できませんでした。"
+                f"{artifact_label}の公開に失敗し、旧出力を完全に復旧できませんでした。"
                 "復旧用バックアップがある場合は保持しています"
             ) from error
         if isinstance(error, KeyboardInterrupt):
             raise
         if isinstance(error, PromptOutputError):
             raise
-        raise PromptOutputError("分析プロンプトを公開できません") from error
+        raise PromptOutputError(f"{artifact_label}を公開できません") from error
 
     cleanup_failures = _cleanup_artifacts(artifacts, keep_backups=frozenset())
     if cleanup_failures:
         raise PromptOutputError(
-            "分析プロンプトは生成されましたが、一時バックアップを削除できません"
+            f"{artifact_label}は生成されましたが、一時バックアップを削除できません"
         )
 
 
@@ -397,6 +478,45 @@ def _verify_published_pair(
         raise
     except (OSError, UnicodeError) as exc:
         raise PromptOutputError("公開した2ファイルを検証できません") from exc
+
+
+def _verify_candidate_analysis_pair(
+    *,
+    markdown_artifact: _OutputArtifact,
+    json_artifact: _OutputArtifact,
+    expected_json: object,
+) -> None:
+    try:
+        published_json = json_artifact.destination.read_bytes()
+        published_markdown = markdown_artifact.destination.read_bytes()
+        if published_json != json_artifact.content:
+            raise PromptOutputError("公開した求人JSONが生成内容と一致しません")
+        if published_markdown != markdown_artifact.content:
+            raise PromptOutputError("公開した条件入りガイドが生成内容と一致しません")
+        _verify_v4_json(json_artifact.destination, expected_json)
+        if published_markdown.startswith(b"\xef\xbb\xbf") or not published_markdown.endswith(
+            b"\n"
+        ):
+            raise PromptOutputError("条件入りガイドの文字コードまたは改行が不正です")
+        markdown_text = published_markdown.decode("utf-8", errors="strict")
+        if "\r" in markdown_text:
+            raise PromptOutputError("条件入りガイドの改行コードが不正です")
+        if markdown_text.count("prompt_template_version: job-comparison-v9") != 1:
+            raise PromptOutputError("条件入りガイドのテンプレート版が不正です")
+        if markdown_text.splitlines().count("## 転職者条件") != 1:
+            raise PromptOutputError("条件入りガイドの転職者条件ブロックが不正です")
+        lines = markdown_text.splitlines()
+        if any(
+            line.startswith("candidate_profile_format:")
+            or line.startswith("candidate_profile_sha256:")
+            or line == "<!-- candidate_profile:start -->"
+            for line in lines
+        ):
+            raise PromptOutputError("条件入りガイドに旧候補者JSON表現が含まれています")
+    except PromptOutputError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise PromptOutputError("公開した条件付き比較ファイルを検証できません") from exc
 
 
 def _verify_candidate_profile(markdown_text: str) -> None:
