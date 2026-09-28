@@ -212,17 +212,30 @@ class CandidateConditionsPanel:
 
     @staticmethod
     def _focus_next(event: tk.Event) -> str:
-        target = event.widget.tk_focusNext()
+        target = CandidateConditionsPanel._tk_focus_target(event.widget, forward=True)
         if target is not None:
             target.focus_set()
         return "break"
 
     @staticmethod
     def _focus_previous(event: tk.Event) -> str:
-        target = event.widget.tk_focusPrev()
+        target = CandidateConditionsPanel._tk_focus_target(event.widget, forward=False)
         if target is not None:
             target.focus_set()
         return "break"
+
+    @staticmethod
+    def _tk_focus_target(widget: tk.Misc, *, forward: bool) -> tk.Misc | None:
+        resolver = widget.tk_focusNext if forward else widget.tk_focusPrev
+        try:
+            return resolver()
+        except tk.TclError as exc:
+            if "invalid command name" not in str(exc):
+                raise
+            tk_library = widget.tk.call("set", "tk_library")
+            focus_script = widget.tk.call("file", "join", tk_library, "focus.tcl")
+            widget.tk.call("source", focus_script)
+            return resolver()
 
 
 __all__ = ["CandidateConditionsPanel"]

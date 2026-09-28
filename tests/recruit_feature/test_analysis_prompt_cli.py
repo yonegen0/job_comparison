@@ -6,11 +6,13 @@ import io
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import uuid
 from unittest.mock import Mock, patch
 
 from recruit_job_tool.analysis_prompt.__main__ import _output_paths, _parser, main
 from recruit_job_tool.analysis_prompt.models import AnalysisGenerationResult
 from recruit_job_tool.models import JobSource
+from recruit_job_tool.single_instance import SingleInstanceLock
 
 
 class AnalysisPromptCliTests(unittest.TestCase):
@@ -62,12 +64,16 @@ class AnalysisPromptCliTests(unittest.TestCase):
         app.create_analysis_files.return_value = result
         paths = SimpleNamespace(initialize=Mock())
         stdout = io.StringIO()
+        mutex_name = f"Local\\RecruitJobTool-AnalysisCliTest-{uuid.uuid4().hex}"
         with patch(
             "recruit_job_tool.analysis_prompt.__main__.AppPaths.from_local_app_data",
             return_value=paths,
         ), patch(
             "recruit_job_tool.analysis_prompt.__main__.RecruitJobApplication",
             return_value=app,
+        ), patch(
+            "recruit_job_tool.analysis_prompt.__main__.SingleInstanceLock",
+            lambda: SingleInstanceLock(mutex_name),
         ), contextlib.redirect_stdout(stdout):
             code = main(
                 [

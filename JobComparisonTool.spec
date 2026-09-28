@@ -5,6 +5,7 @@ analysis = Analysis(
     pathex=["."],
     binaries=[],
     datas=[
+        ("job_comparison_app/assets/JobComparisonTool.ico", "job_comparison_app/assets"),
         ("job_comparison_report/templates/report.html", "job_comparison_report/templates"),
         ("job_comparison_report/templates/report.css", "job_comparison_report/templates"),
     ],
@@ -43,6 +44,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="job_comparison_app/assets/JobComparisonTool.ico",
 )
 collect = COLLECT(
     exe,

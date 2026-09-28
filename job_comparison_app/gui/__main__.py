@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
@@ -10,6 +11,9 @@ from ..errors import AlreadyRunningError, JobComparisonAppError
 from ..single_instance import SingleInstanceLock
 from .controller import Controller
 from .view import TkView, WindowsOutputOpener
+
+
+APP_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "JobComparisonTool.ico"
 
 
 def _set_dpi_awareness() -> None:
@@ -69,6 +73,15 @@ def _fit_to_work_area(root: tk.Tk) -> None:
     root.geometry(f"{width}x{height}+{x}+{y}")
 
 
+def _set_window_icon(root: tk.Tk) -> None:
+    try:
+        if APP_ICON_PATH.is_file():
+            root.iconbitmap(default=str(APP_ICON_PATH))
+    except (OSError, tk.TclError):
+        # The icon is cosmetic; a missing or unreadable asset must not prevent startup.
+        pass
+
+
 def _show_startup_error(title: str, message: str, root: tk.Tk | None = None) -> None:
     temporary: tk.Tk | None = None
     try:
@@ -91,6 +104,7 @@ def main() -> int:
     try:
         lock.acquire()
         root = tk.Tk()
+        _set_window_icon(root)
         root.withdraw()
         root.geometry("960x700")
         application = JobComparisonApplication()

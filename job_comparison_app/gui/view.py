@@ -16,6 +16,7 @@ from recruit_job_tool.gui.controller import CandidateProfileDecision
 from job_comparison_app import __version__
 
 from .candidate_conditions import CandidateConditionsPanel
+from .pdf_copy_panel import PdfCopyPanel
 from .controller import Controller, ViewModel
 from .dispatcher import MainThreadDispatcher
 from .dialogs import DialogAction, DialogKind, DialogPresenter
@@ -63,7 +64,8 @@ TAB_CANDIDATE = 0
 TAB_RECRUIT = 1
 TAB_PDF = 2
 TAB_EXPORT = 3
-TAB_REPORT = 4
+TAB_COPY = 4
+TAB_REPORT = 5
 
 
 class WindowsOutputOpener:
@@ -119,6 +121,7 @@ class TkView:
         self._changing_tab_programmatically = False
         self.visuals = VisualManager(root, on_change=self._visuals_changed)
         self.style = self.visuals.style
+        self.style.configure("App.TNotebook.Tab", padding=(10, 8))
         self.dialogs = DialogPresenter(root, self.visuals)
         self._build_variables()
         self._build_layout()
@@ -134,6 +137,7 @@ class TkView:
         self.root.bind("<Control-Key-3>", lambda event: self._shortcut_tab(2))
         self.root.bind("<Control-Key-4>", lambda event: self._shortcut_tab(3))
         self.root.bind("<Control-Key-5>", lambda event: self._shortcut_tab(4))
+        self.root.bind("<Control-Key-6>", lambda event: self._shortcut_tab(5))
         self.root.bind("<Alt-j>", lambda event: self._shortcut_recruit("select_jobins"))
         self.root.bind("<Alt-c>", lambda event: self._shortcut_recruit("select_careerbank"))
         self.root.bind("<Control-o>", lambda event: self._shortcut_recruit("choose_html"))
@@ -210,14 +214,17 @@ class TkView:
         self.notebook = ttk.Notebook(self.root, style=STYLE_NOTEBOOK)
         self.notebook.grid(row=2, column=0, sticky="nsew", padx=20, pady=(4, 4))
         self.candidate_tab_shell, self.candidate_tab = self._scrollable_tab()
+        self.candidate_tab_canvas = self._tab_canvases[TAB_CANDIDATE]
         self.recruit_tab_shell, self.recruit_tab = self._scrollable_tab()
         self.pdf_tab_shell, self.pdf_tab = self._scrollable_tab()
         self.export_tab_shell, self.export_tab = self._scrollable_tab()
+        self.copy_tab_shell, self.copy_tab = self._scrollable_tab()
         self.report_tab_shell, self.report_tab = self._scrollable_tab()
         self.notebook.add(self.candidate_tab_shell, text="転職者条件")
         self.notebook.add(self.recruit_tab_shell, text="求人取得")
         self.notebook.add(self.pdf_tab_shell, text="求人PDF整理")
         self.notebook.add(self.export_tab_shell, text="求人PDF全文統合テキスト化")
+        self.notebook.add(self.copy_tab_shell, text="対象PDFコピー")
         self.notebook.add(self.report_tab_shell, text="比較資料PDF生成")
         self.notebook.bind("<<NotebookTabChanged>>", self._top_tab_changed, add="+")
         self._select_top_tab(TAB_CANDIDATE)
@@ -236,7 +243,14 @@ class TkView:
         )
         self._build_pdf_tab()
         self._build_export_tab()
+        self.copy_panel = PdfCopyPanel(self, self.copy_tab)
         self._build_report_tab()
+        self.root.bind(
+            "<MouseWheel>",
+            self._route_candidate_mousewheel,
+            add="+",
+        )
+        self.root.bind("<MouseWheel>", self._route_copy_mousewheel, add="+")
 
         footer = ttk.Frame(self.root, padding=(20, 0, 20, 4), style=STYLE_FOOTER)
         footer.grid(row=3, column=0, sticky="ew")
@@ -880,6 +894,63 @@ class TkView:
             self._select_top_tab(index)
         return "break"
 
+    def _route_candidate_mousewheel(self, event: tk.Event) -> str | None:
+        if (
+            self._busy
+            or self._selected_top_tab() != TAB_CANDIDATE
+            or getattr(event, "delta", 0) == 0
+        ):
+            return None
+        target = getattr(event, "widget", None)
+        if not isinstance(target, tk.Misc):
+            return None
+        try:
+            if not target.winfo_exists():
+                return None
+        except tk.TclError:
+            return None
+        if not self._widget_is_within(target, self.candidate_tab_shell):
+            return None
+        if any(
+            self._widget_is_within(target, input_widget)
+            for input_widget in self.candidate_panel.widgets.values()
+        ):
+            return None
+        if any(
+            isinstance(widget, ttk.Scrollbar)
+            for widget in self._widget_ancestors(target)
+        ):
+            return None
+        amount = -1 if event.delta > 0 else 1
+        self.candidate_tab_canvas.yview_scroll(amount, "units")
+        return "break"
+
+    def _route_copy_mousewheel(self, event: tk.Event) -> str | None:
+        if self._busy or self._selected_top_tab() != TAB_COPY or not event.delta:
+            return None
+        widget = event.widget
+        if not isinstance(widget, tk.Misc) or not self._widget_is_within(widget, self.copy_tab_shell):
+            return None
+        if any(isinstance(parent, (tk.Text, ttk.Treeview, ttk.Scrollbar))
+               for parent in self._widget_ancestors(widget)):
+            return None
+        self._tab_canvases[TAB_COPY].yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
+
+    @staticmethod
+    def _widget_ancestors(widget: tk.Misc) -> tuple[tk.Misc, ...]:
+        ancestors: list[tk.Misc] = []
+        current: tk.Misc | None = widget
+        while current is not None:
+            ancestors.append(current)
+            parent = getattr(current, "master", None)
+            current = parent if isinstance(parent, tk.Misc) else None
+        return tuple(ancestors)
+
+    @classmethod
+    def _widget_is_within(cls, widget: tk.Misc, ancestor: tk.Misc) -> bool:
+        return ancestor in cls._widget_ancestors(widget)
+
     def _shortcut_preview(self) -> str:
         if not self._busy:
             self._preview_active()
@@ -909,6 +980,8 @@ class TkView:
             self.controller.preview_export()
         elif selected == TAB_REPORT:
             self.controller.preview_report()
+        elif selected == TAB_COPY:
+            self.controller.preview_copy()
 
     def _resolve_candidate_profile(self) -> CandidateProfileDecision:
         missing = self.candidate_panel.missing_required_fields()
@@ -1149,6 +1222,7 @@ class TkView:
             self.dialogs.show("バージョン情報", f"求人比較ツール {__version__}", DialogKind.INFO)
 
     def render(self, model: ViewModel) -> None:
+        self.copy_panel.render(model)
         self._last_model = model
         self._busy = model.busy
         self.status_text.set(model.status)
@@ -1376,6 +1450,11 @@ class TkView:
             tree.tag_configure("error", foreground=self.visuals.tone_color("error"))
 
     def _visuals_changed(self) -> None:
+        self.style.configure("App.TNotebook.Tab", padding=(10, 8))
+        if hasattr(self, "copy_panel"):
+            palette = self.visuals.palette
+            self.copy_panel.editor.configure(background=palette.surface, foreground=palette.text,
+                                             insertbackground=palette.text, selectbackground=palette.accent)
         for canvas in self._tab_canvases:
             canvas.configure(background=self.visuals.palette.app_background)
         if hasattr(self, "dialogs"):
@@ -1399,6 +1478,7 @@ class TkView:
 __all__ = [
     "DialogPresenter",
     "TAB_CANDIDATE",
+    "TAB_COPY",
     "TAB_EXPORT",
     "TAB_PDF",
     "TAB_RECRUIT",

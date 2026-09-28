@@ -35,6 +35,23 @@ $finalChecksumName = "SHA256SUMS-$ExpectedVersion.txt"
 $finalChecksumPath = Join-Path $releaseRoot $finalChecksumName
 $currentDirectory = Join-Path $releaseRoot "current"
 $archiveRoot = Join-Path $releaseRoot "archive"
+$guideSource = Join-Path $repoRoot "docs\user-guide"
+$guideDirectoryName = "使い方ガイド"
+$guideMarkdownName = "求人比較ツール_使い方.md"
+$guideImageNames = @(
+    "00-workflow-overview.png",
+    "01-start-candidate.png",
+    "02-candidate-example.png",
+    "03-recruit-initial-setup.png",
+    "04-recruit-ready.png",
+    "05-replace-confirmation.png",
+    "06-general-comparison-confirmation.png",
+    "07-candidate-analysis-complete.png",
+    "08-pdf-organize-preview.png",
+    "09-pdf-text-preview.png",
+    "10-report-preview.png",
+    "11-pdf-copy-preview.png"
+)
 
 if ((Split-Path -Leaf $expectedZipPath) -cne $expectedZipName) {
     throw "ExpectedZip must end with $expectedZipName."
@@ -68,6 +85,108 @@ function Assert-NormalDirectory {
     }
 }
 
+function Get-PngChunkTypes {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    $types = New-Object System.Collections.ArrayList
+    $offset = 8
+    while ($offset -lt $Bytes.Length) {
+        if ($offset + 12 -gt $Bytes.Length) {
+            throw "PNG chunk is truncated."
+        }
+        [uint32]$length =
+            ([uint32]$Bytes[$offset] -shl 24) -bor
+            ([uint32]$Bytes[$offset + 1] -shl 16) -bor
+            ([uint32]$Bytes[$offset + 2] -shl 8) -bor
+            [uint32]$Bytes[$offset + 3]
+        $type = [System.Text.Encoding]::ASCII.GetString($Bytes, $offset + 4, 4)
+        [void]$types.Add($type)
+        $offset += 12 + [int64]$length
+        if ($offset -gt $Bytes.Length) {
+            throw "PNG chunk extends beyond the file."
+        }
+        if ($type -ceq "IEND") {
+            if ($offset -ne $Bytes.Length) {
+                throw "PNG contains trailing bytes."
+            }
+            break
+        }
+    }
+    return @($types)
+}
+
+function Assert-UserGuide {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    Assert-NormalDirectory -Path $Path
+    $markdown = Join-Path $Path $guideMarkdownName
+    $images = Join-Path $Path "images"
+    Assert-NormalFile -Path $markdown
+    Assert-NormalDirectory -Path $images
+
+    $expectedGuideItems = @($guideMarkdownName, "images") | Sort-Object
+    $actualGuideItems = @(Get-ChildItem -LiteralPath $Path -Force | ForEach-Object Name | Sort-Object)
+    if (@(Compare-Object -ReferenceObject $expectedGuideItems -DifferenceObject $actualGuideItems).Count -ne 0) {
+        throw "The user-guide root allowlist does not match."
+    }
+    $expectedImages = @($guideImageNames | Sort-Object)
+    $actualImages = @(Get-ChildItem -LiteralPath $images -Force | ForEach-Object Name | Sort-Object)
+    if (@(Compare-Object -ReferenceObject $expectedImages -DifferenceObject $actualImages).Count -ne 0) {
+        throw "The user-guide image allowlist does not match."
+    }
+
+    $markdownBytes = [System.IO.File]::ReadAllBytes($markdown)
+    if ($markdownBytes.Length -eq 0 -or $markdownBytes.Length -gt 307200) {
+        throw "The user-guide Markdown size is invalid."
+    }
+    if ($markdownBytes.Length -ge 3 -and
+        $markdownBytes[0] -eq 0xEF -and
+        $markdownBytes[1] -eq 0xBB -and
+        $markdownBytes[2] -eq 0xBF) {
+        throw "The user-guide Markdown must not contain a UTF-8 BOM."
+    }
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $markdownText = $strictUtf8.GetString($markdownBytes)
+    if (-not $markdownText.StartsWith("# 求人比較ツール 使い方ガイド`n") -or
+        -not $markdownText.Contains("対象バージョン: $ExpectedVersion") -or
+        -not $markdownText.EndsWith("`n") -or
+        $markdownText.Contains("`r") -or
+        $markdownText.Contains("C:\Users\")) {
+        throw "The user-guide Markdown contract is invalid."
+    }
+    foreach ($name in $guideImageNames) {
+        if (-not $markdownText.Contains("(images/$name)")) {
+            throw "The user guide does not reference image: $name"
+        }
+    }
+
+    [int64]$totalImageBytes = 0
+    $pngSignature = [byte[]](137, 80, 78, 71, 13, 10, 26, 10)
+    foreach ($name in $guideImageNames) {
+        $image = Join-Path $images $name
+        Assert-NormalFile -Path $image
+        $bytes = [System.IO.File]::ReadAllBytes($image)
+        if ($bytes.Length -le 24 -or $bytes.Length -gt 1048576) {
+            throw "The user-guide PNG size is invalid: $name"
+        }
+        for ($index = 0; $index -lt $pngSignature.Length; $index++) {
+            if ($bytes[$index] -ne $pngSignature[$index]) {
+                throw "The user-guide PNG signature is invalid: $name"
+            }
+        }
+        $chunkTypes = @(Get-PngChunkTypes -Bytes $bytes)
+        if ($chunkTypes[0] -cne "IHDR" -or $chunkTypes[-1] -cne "IEND") {
+            throw "The user-guide PNG structure is invalid: $name"
+        }
+        if (@($chunkTypes | Where-Object { $_ -in @("tEXt", "zTXt", "iTXt", "eXIf") }).Count -ne 0) {
+            throw "The user-guide PNG contains metadata: $name"
+        }
+        $totalImageBytes += $bytes.Length
+    }
+    if ($totalImageBytes -gt 8388608) {
+        throw "The user-guide PNG total size exceeds 8 MB."
+    }
+}
+
 function Assert-Package {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -77,7 +196,8 @@ function Assert-Package {
         "求人比較ツールを起動.bat",
         "はじめにお読みください.txt",
         "SHA256SUMS.txt",
-        "_internal"
+        "_internal",
+        $guideDirectoryName
     ) | Sort-Object
     $actualTopLevel = @(Get-ChildItem -LiteralPath $Path -Force | ForEach-Object Name | Sort-Object)
     $difference = @(Compare-Object -ReferenceObject $requiredTopLevel -DifferenceObject $actualTopLevel)
@@ -90,10 +210,12 @@ function Assert-Package {
     $readme = Join-Path $Path "はじめにお読みください.txt"
     $checksum = Join-Path $Path "SHA256SUMS.txt"
     $internal = Join-Path $Path "_internal"
+    $guide = Join-Path $Path $guideDirectoryName
     foreach ($file in @($executable, $launcher, $readme, $checksum)) {
         Assert-NormalFile -Path $file
     }
     Assert-NormalDirectory -Path $internal
+    Assert-UserGuide -Path $guide
 
     foreach ($name in @("_tcl_data", "_tk_data", "_tkinter.pyd", "tcl86t.dll", "tk86t.dll")) {
         if (-not (Test-Path -LiteralPath (Join-Path $internal $name))) {
@@ -127,9 +249,13 @@ function Assert-Package {
         "reports", "outputs", "tests", "__pycache__", ".pytest_cache",
         ".venv", ".venv-build", "build", "dist", "release"
     )
+    $allowedGuideMarkdown = Join-Path $guide $guideMarkdownName
+    $allowedGuidePngs = @($guideImageNames | ForEach-Object { Join-Path (Join-Path $guide "images") $_ })
     $bannedFiles = @($allItems | Where-Object {
         (-not $_.PSIsContainer) -and (
-            $_.Extension -in @(".py", ".pyc", ".pdf", ".csv", ".md", ".json", ".jsonl") -or
+            $_.Extension -in @(".py", ".pyc", ".pdf", ".csv", ".json", ".jsonl") -or
+            ($_.Extension -eq ".md" -and $_.FullName -ine $allowedGuideMarkdown) -or
+            ($_.Extension -eq ".png" -and $_.FullName -notin $allowedGuidePngs) -or
             ($_.Extension -in @(".html", ".htm") -and $_.FullName -ine (Join-Path $templateRoot "report.html")) -or
             ($_.Extension -eq ".css" -and $_.FullName -ine (Join-Path $templateRoot "report.css"))
         )
@@ -209,6 +335,7 @@ function Remove-OwnedStage {
 Assert-NormalDirectory -Path $sourceDirectory
 Assert-NormalFile -Path (Join-Path $sourceDirectory "JobComparisonTool.exe")
 Assert-NormalDirectory -Path (Join-Path $sourceDirectory "_internal")
+Assert-UserGuide -Path $guideSource
 
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $archiveRoot -Force | Out-Null
@@ -246,6 +373,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $sourceDirectory "_internal") -Destination $packageDirectory -Recurse
     Copy-Item -LiteralPath (Join-Path $repoRoot "求人比較ツールを起動.bat") -Destination $packageDirectory
     Copy-Item -LiteralPath (Join-Path $repoRoot "はじめにお読みください.txt") -Destination $packageDirectory
+    Copy-Item -LiteralPath $guideSource -Destination (Join-Path $packageDirectory $guideDirectoryName) -Recurse
 
     $executable = Join-Path $packageDirectory "JobComparisonTool.exe"
     $executableHash = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -12,6 +12,8 @@ from pdf_job_exporter.models import ProgressEvent
 from pdf_job_exporter.service import PdfTextExportPlan, PdfTextExportRequest, PdfTextExportResult
 
 from ..application import JobComparisonApplication
+from ..pdf_copy import PdfCopyPlan, PdfCopyResult, resolve_decisions, CopyStatus
+from .pdf_copy_panel import PdfCopyPanel
 from ..errors import InputChangedError, InputValidationError, JobComparisonAppError
 from .export_outputs import ExportOutputConflict, inspect_export_output, resolve_numbered_export_output
 from .pdf_outputs import (
@@ -25,6 +27,8 @@ from recruit_job_tool.models import JobSource
 
 @dataclass(frozen=True, slots=True)
 class ViewModel:
+    copy_plan: PdfCopyPlan | None = None
+    copy_result: PdfCopyResult | None = None
     busy: bool = False
     status: str = "入力を選択してください。"
     tone: str = "normal"
@@ -42,6 +46,7 @@ class ViewModel:
 
 
 class View(Protocol):
+    copy_panel: PdfCopyPanel
     def render(self, model: ViewModel) -> None: ...
     def current_pdf_request(self) -> PdfOrganizationRequest: ...
     def current_export_request(self) -> PdfTextExportRequest: ...
@@ -83,6 +88,86 @@ T = TypeVar("T")
 
 
 class Controller:
+    def invalidate_copy(self) -> None:
+        if self.model.busy:
+            return
+        self.model = replace(self.model, copy_plan=None, copy_result=None,
+                             status="対象PDFコピーの入力が変更されました。事前確認してください。", tone="normal")
+        self.view.render(self.model)
+
+    def preview_copy(self) -> None:
+        self._prepare_copy(False)
+
+    def apply_copy(self) -> None:
+        self._prepare_copy(True)
+
+    def _prepare_copy(self, commit: bool) -> None:
+        if self.model.busy:
+            return
+        try:
+            request = self.view.copy_panel.request()
+        except InputValidationError as exc:
+            self.view.show_error("入力を確認してください", str(exc))
+            return
+        previous = self.model.copy_plan if self.model.copy_result is None else None
+
+        def prepare() -> PdfCopyPlan:
+            plan = self.application.prepare_pdf_copy(request)
+            if commit and previous is not None and previous != plan:
+                raise InputChangedError("確認後に対象PDFが変更されました。事前確認してください。")
+            return plan
+
+        self.model = replace(self.model, export_progress=None)
+        self._submit("対象PDFを確認しています…", prepare,
+                     self._copy_apply_ready if commit else self._copy_preview_ready,
+                     keep_busy=commit)
+
+    def _copy_preview_ready(self, plan: PdfCopyPlan) -> None:
+        self.model = replace(self.model, busy=False, copy_plan=plan, copy_result=None,
+                             status="事前確認が完了しました。", tone="normal")
+        self.view.render(self.model)
+
+    def _copy_apply_ready(self, plan: PdfCopyPlan) -> None:
+        self.model = replace(self.model, copy_plan=plan, copy_result=None)
+        self.view.render(self.model)
+        try:
+            conflicts = [e for e in plan.entries if e.status == CopyStatus.CONFLICT]
+            choices = {}
+            for index, entry in enumerate(conflicts, 1):
+                choice = self.view.copy_panel.ask_conflict(entry, index, len(conflicts), plan.output_dir)
+                if choice == OutputConflictChoice.CANCEL:
+                    self._cancel_copy()
+                    return
+                choices[entry.line] = choice == OutputConflictChoice.REPLACE
+            decisions = resolve_decisions(plan, choices)
+            if not decisions:
+                self._copy_finished(PdfCopyResult(plan.output_dir, plan.entries))
+                return
+            if not self.view.copy_panel.ask_commit(plan, decisions):
+                self._cancel_copy()
+                return
+        except Exception:
+            self._cancel_copy()
+            self.view.show_error("コピーを開始できません", "保存方法の確認に失敗しました。")
+            return
+        self._submit("PDFをコピーしています…",
+                     lambda: self.application.commit_pdf_copy(plan, decisions),
+                     self._copy_finished, already_busy=True)
+
+    def _cancel_copy(self) -> None:
+        self.model = replace(self.model, busy=False, status="コピーをキャンセルしました。", tone="normal")
+        self.view.render(self.model)
+
+    def _copy_finished(self, result: PdfCopyResult) -> None:
+        self.model = replace(self.model, busy=False, copy_result=result,
+                             status="コピー結果を確認してください。" if result.warning else "PDFをコピーしました。",
+                             tone="warning" if result.warning else "success")
+        self.view.render(self.model)
+
+    def open_copy_output_folder(self) -> None:
+        if self.model.copy_plan and not self.model.busy:
+            self._open(lambda: self.output_opener.open_folder(self.model.copy_plan.output_dir))
+
     def __init__(self, *, view: View, application: JobComparisonApplication,
                  output_opener: OutputOpener, task_runner: TaskRunner | None = None) -> None:
         self.view, self.application, self.output_opener = view, application, output_opener

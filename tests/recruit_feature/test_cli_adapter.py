@@ -5,10 +5,13 @@ import io
 from pathlib import Path
 import tempfile
 import unittest
+import uuid
+from unittest.mock import patch
 
 from recruit_job_tool.app_paths import AppPaths
 from recruit_job_tool.cli_adapter import parser_for, run_provider_cli
 from recruit_job_tool.models import JobSource
+from recruit_job_tool.single_instance import SingleInstanceLock
 
 
 class CliAdapterTests(unittest.TestCase):
@@ -29,7 +32,11 @@ class CliAdapterTests(unittest.TestCase):
             paths = AppPaths.from_root(Path(temporary).resolve())
             stdout = io.StringIO()
             stderr = io.StringIO()
-            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            mutex_name = f"Local\\RecruitJobTool-CliTest-{uuid.uuid4().hex}"
+            with patch(
+                "recruit_job_tool.cli_adapter.SingleInstanceLock",
+                lambda: SingleInstanceLock(mutex_name),
+            ), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 code = run_provider_cli(
                     JobSource.CAREERBANK,
                     ["export"],

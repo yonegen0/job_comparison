@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .pdf_copy import PdfCopyRequest, PdfCopyPlan, PdfCopyDecision, PdfCopyResult
 
 from job_comparison_report.markdown_parser import MarkdownFormatError
 from job_comparison_report.models import BuildResult
@@ -40,6 +41,20 @@ from .errors import (
 
 
 class JobComparisonApplication:
+    def prepare_pdf_copy(self, request: PdfCopyRequest) -> PdfCopyPlan:
+        from .pdf_copy import prepare_pdf_copy
+        try:
+            return prepare_pdf_copy(request)
+        except OSError as exc:
+            raise InputValidationError(str(exc)) from exc
+
+    def commit_pdf_copy(self, plan: PdfCopyPlan, decisions: tuple[PdfCopyDecision, ...]) -> PdfCopyResult:
+        from .pdf_copy import commit_pdf_copy
+        try:
+            return commit_pdf_copy(plan, decisions)
+        except OSError as exc:
+            raise OutputOperationError(str(exc)) from exc
+
     def prepare_pdf(self, request: PdfOrganizationRequest) -> PdfOrganizationPlan:
         try:
             return prepare_pdf_organization(request)

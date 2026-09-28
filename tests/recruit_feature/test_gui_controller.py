@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -22,9 +23,23 @@ from recruit_job_tool.models import JobSource
 from recruit_job_tool.workflow import ImportMode
 
 
-def status(provider: JobSource, count: int = 1) -> ProviderStatus:
+def status(
+    provider: JobSource,
+    count: int | None = 1,
+    *,
+    health: ProviderHealth = ProviderHealth.READY,
+    output_configured: bool = True,
+    output_error: bool = False,
+) -> ProviderStatus:
     return ProviderStatus(
-        provider, ProviderHealth.READY, count, True, False, False, True, False
+        provider,
+        health,
+        count,
+        True,
+        False,
+        False,
+        output_configured,
+        output_error,
     )
 
 
@@ -58,10 +73,14 @@ class FakeView:
         self.dialogs = []
         self.copied = None
         self.closed = False
+        self.replace_prompts = []
         self.candidate_decision = CandidateProfileDecision(proceed=True)
 
     def render(self, model): self.models.append(model)
-    def ask_replace(self, spec): self.dialogs.append(spec); return True
+    def ask_replace(self, spec):
+        self.replace_prompts.append(spec)
+        self.dialogs.append(spec)
+        return True
     def ask_restore(self, spec): self.dialogs.append(spec); return True
     def show_info(self, spec): self.dialogs.append(spec)
     def show_warning(self, spec): self.dialogs.append(spec)
@@ -83,12 +102,19 @@ class FakeApplication:
     def __init__(self):
         self.paths = SimpleNamespace(output_dir=Path("C:/safe/output"))
         self.calls = []
+        self.statuses = {provider: status(provider) for provider in JobSource}
+        self.import_results = []
+        self.import_error = None
 
-    def get_provider_status(self, *, provider): return status(provider)
+    def get_provider_status(self, *, provider): return self.statuses[provider]
     def ensure_output_directory(self, *, provider):
         return Path(f"C:/safe/{provider.value.lower()}/output")
     def import_saved_html(self, *, provider, input_path, mode):
         self.calls.append((provider, input_path, mode))
+        if self.import_error is not None:
+            raise self.import_error
+        if self.import_results:
+            return self.import_results.pop(0)
         return ImportResult(provider, mode, 2, 2, Path("jobs.csv"), True, ())
     def create_analysis_files(self, *, provider, candidate_profile=None):
         self.calls.append((provider, "analysis", candidate_profile))
@@ -107,9 +133,10 @@ class ControllerTests(unittest.TestCase):
         self.view = FakeView()
         self.app = FakeApplication()
         self.opener = FakeOpener()
+        self.picker = FakePicker(Path("C:/input/jobs.html"))
         return Controller(
             view=self.view,
-            file_picker=FakePicker(Path("C:/input/jobs.html")),
+            file_picker=self.picker,
             application=self.app,
             output_folder_opener=self.opener,
             task_runner=runner or ImmediateRunner(),
@@ -131,7 +158,7 @@ class ControllerTests(unittest.TestCase):
         self.assertIsNone(controller.model.providers[JobSource.CAREERBANK].selected_path)
         self.assertEqual(controller.model.providers[JobSource.JOBINS].mode, ImportMode.MERGE)
 
-    def test_import_clears_selection_and_resets_safe_mode(self) -> None:
+    def test_import_clears_selection_and_keeps_merge_mode(self) -> None:
         controller = self.make_controller()
         controller.start()
         controller.choose_html()
@@ -139,8 +166,223 @@ class ControllerTests(unittest.TestCase):
         controller.import_selected()
         state = controller.model.providers[JobSource.JOBINS]
         self.assertIsNone(state.selected_path)
-        self.assertEqual(state.mode, ImportMode.REPLACE)
-        self.assertEqual(len(self.app.calls), 1)
+        self.assertEqual(state.mode, ImportMode.MERGE)
+        self.assertEqual(
+            self.app.calls,
+            [(JobSource.JOBINS, Path("C:/input/jobs.html"), ImportMode.MERGE)],
+        )
+        self.assertEqual(self.view.replace_prompts, [])
+
+    def test_zero_result_clears_selection_and_keeps_merge_mode(self) -> None:
+        controller = self.make_controller()
+        self.app.import_results.append(
+            ImportResult(
+                JobSource.JOBINS,
+                ImportMode.MERGE,
+                0,
+                1,
+                None,
+                False,
+                (),
+            )
+        )
+        controller.start()
+        controller.choose_html()
+        controller.change_mode(ImportMode.MERGE)
+
+        controller.import_selected()
+
+        state = controller.model.providers[JobSource.JOBINS]
+        self.assertIsNone(state.selected_path)
+        self.assertIs(state.mode, ImportMode.MERGE)
+        self.assertEqual(self.view.dialogs[-1].title, "取り込み結果")
+
+    def test_replace_import_clears_selection_and_keeps_replace_mode(self) -> None:
+        controller = self.make_controller()
+        controller.start()
+        controller.choose_html()
+
+        controller.import_selected()
+
+        state = controller.model.providers[JobSource.JOBINS]
+        self.assertIsNone(state.selected_path)
+        self.assertIs(state.mode, ImportMode.REPLACE)
+        self.assertEqual(len(self.view.replace_prompts), 1)
+        self.assertEqual(self.app.calls[-1][2], ImportMode.REPLACE)
+
+    def test_consecutive_imports_keep_merge_without_reselection(self) -> None:
+        controller = self.make_controller()
+        controller.start()
+        controller.choose_html()
+        controller.change_mode(ImportMode.MERGE)
+        controller.import_selected()
+
+        self.picker.path = Path("C:/input/jobs-next.html")
+        controller.choose_html()
+        controller.import_selected()
+
+        self.assertEqual(
+            self.app.calls,
+            [
+                (JobSource.JOBINS, Path("C:/input/jobs.html"), ImportMode.MERGE),
+                (JobSource.JOBINS, Path("C:/input/jobs-next.html"), ImportMode.MERGE),
+            ],
+        )
+        self.assertIs(
+            controller.model.providers[JobSource.JOBINS].mode,
+            ImportMode.MERGE,
+        )
+        self.assertIsNone(
+            controller.model.providers[JobSource.JOBINS].selected_path
+        )
+        self.assertEqual(self.view.replace_prompts, [])
+
+    def test_completed_import_updates_only_its_provider_mode(self) -> None:
+        controller = self.make_controller()
+        controller.start()
+        controller.change_mode(ImportMode.MERGE)
+        controller.choose_html()
+        controller.select_tab(JobSource.CAREERBANK)
+        controller.choose_html()
+
+        controller.select_tab(JobSource.JOBINS)
+        controller.import_selected()
+
+        self.assertIs(
+            controller.model.providers[JobSource.JOBINS].mode,
+            ImportMode.MERGE,
+        )
+        self.assertIs(
+            controller.model.providers[JobSource.CAREERBANK].mode,
+            ImportMode.REPLACE,
+        )
+        self.assertIsNotNone(
+            controller.model.providers[JobSource.CAREERBANK].selected_path
+        )
+
+    def test_import_failure_keeps_selected_path_and_merge_mode(self) -> None:
+        controller = self.make_controller()
+        self.app.import_error = RuntimeError("sensitive C:/input/jobs.html")
+        controller.start()
+        controller.choose_html()
+        controller.change_mode(ImportMode.MERGE)
+
+        controller.import_selected()
+
+        state = controller.model.providers[JobSource.JOBINS]
+        self.assertEqual(state.selected_path, Path("C:/input/jobs.html"))
+        self.assertIs(state.mode, ImportMode.MERGE)
+        self.assertFalse(controller.model.busy)
+        self.assertNotIn("C:/input/jobs.html", controller.model.status_text)
+        self.assertNotIn("C:/input/jobs.html", self.view.dialogs[-1].message)
+
+    def test_import_completion_normalizes_merge_for_unsafe_statuses(self) -> None:
+        completion_statuses = (
+            (
+                status(
+                    JobSource.JOBINS,
+                    1,
+                    output_configured=False,
+                ),
+                ImportMode.MERGE,
+            ),
+            (
+                status(
+                    JobSource.JOBINS,
+                    101,
+                    health=ProviderHealth.REPLACE_REQUIRED,
+                ),
+                ImportMode.REPLACE,
+            ),
+            (
+                status(
+                    JobSource.JOBINS,
+                    None,
+                    health=ProviderHealth.UNAVAILABLE,
+                ),
+                ImportMode.REPLACE,
+            ),
+            (
+                status(JobSource.JOBINS, 1, output_error=True),
+                ImportMode.REPLACE,
+            ),
+        )
+
+        for completion_status, expected_mode in completion_statuses:
+            with self.subTest(status=completion_status):
+                controller = self.make_controller()
+                controller.start()
+                controller.choose_html()
+                controller.change_mode(ImportMode.MERGE)
+                self.app.statuses[JobSource.JOBINS] = completion_status
+
+                controller.import_selected()
+
+                state = controller.model.providers[JobSource.JOBINS]
+                self.assertIsNone(state.selected_path)
+                self.assertIs(state.mode, expected_mode)
+
+    def test_new_controller_starts_each_provider_in_replace_mode(self) -> None:
+        controller = self.make_controller()
+
+        self.assertTrue(
+            all(
+                provider.mode is ImportMode.REPLACE
+                for provider in controller.model.providers.values()
+            )
+        )
+
+    def test_change_mode_keeps_safe_replace_for_restricted_statuses(self) -> None:
+        controller = self.make_controller()
+        controller.start()
+        original = controller.model.providers[JobSource.JOBINS]
+        restricted = (
+            ProviderStatus(
+                JobSource.JOBINS,
+                ProviderHealth.REPLACE_REQUIRED,
+                101,
+                False,
+                False,
+                False,
+                True,
+                False,
+            ),
+            ProviderStatus(
+                JobSource.JOBINS,
+                ProviderHealth.READY,
+                1,
+                False,
+                False,
+                False,
+                True,
+                True,
+            ),
+        )
+
+        for provider_status in restricted:
+            with self.subTest(status=provider_status):
+                providers = dict(controller.model.providers)
+                providers[JobSource.JOBINS] = replace(
+                    original,
+                    mode=ImportMode.REPLACE,
+                    status=provider_status,
+                )
+                controller.model = replace(controller.model, providers=providers)
+                controller.change_mode(ImportMode.MERGE)
+                self.assertIs(
+                    controller.model.providers[JobSource.JOBINS].mode,
+                    ImportMode.REPLACE,
+                )
+
+    def test_busy_controller_does_not_change_import_mode(self) -> None:
+        controller = self.make_controller(PendingRunner())
+        controller.start()
+        controller.change_mode(ImportMode.MERGE)
+        self.assertTrue(controller.model.busy)
+        self.assertIs(
+            controller.model.providers[JobSource.JOBINS].mode,
+            ImportMode.REPLACE,
+        )
 
     def test_analysis_dialog_contains_basenames_only_and_clipboard_is_fixed(self) -> None:
         controller = self.make_controller()

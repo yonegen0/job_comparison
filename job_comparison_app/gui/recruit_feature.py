@@ -415,11 +415,11 @@ class RecruitFeaturePanel:
     def _mode_changed(self, provider: JobSource) -> None:
         if self.controller is None or self._host_busy:
             return
-        self.controller.select_tab(provider)
         try:
             mode = ImportMode(self._modes[provider].get())
         except ValueError:
             mode = ImportMode.REPLACE
+        self.controller.select_tab(provider)
         self.controller.change_mode(mode)
 
     def _tab_changed(self, event: tk.Event) -> None:

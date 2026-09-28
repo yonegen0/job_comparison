@@ -10,7 +10,9 @@ from job_comparison_app.gui.controller import Controller
 import job_comparison_app.gui.recruit_feature as recruit_feature_module
 from recruit_job_tool.app_paths import AppPaths
 from recruit_job_tool.migration import MigrationManager
+from recruit_job_tool.models import JobSource
 from recruit_job_tool.single_instance import SingleInstanceLock
+from recruit_job_tool.workflow import ImportMode
 
 from job_comparison_app.gui.recruit_feature import (
     RecruitFeatureCoordinator,
@@ -122,8 +124,19 @@ def _coordinator(panel: FakePanel):
     return coordinator, states
 
 
+def _use_isolated_mutex(monkeypatch) -> str:
+    mutex_name = f"Local\\RecruitJobTool-GuiTest-{uuid.uuid4().hex}"
+    monkeypatch.setattr(
+        recruit_feature_module,
+        "SingleInstanceLock",
+        lambda: SingleInstanceLock(mutex_name),
+    )
+    return mutex_name
+
+
 def test_probe_shows_in_tab_setup_without_writing(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    _use_isolated_mutex(monkeypatch)
     panel = FakePanel()
     coordinator, states = _coordinator(panel)
 
@@ -141,6 +154,7 @@ def test_initialize_fresh_then_probe_reuses_existing_marker(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    _use_isolated_mutex(monkeypatch)
     panel = FakePanel()
     coordinator, _ = _coordinator(panel)
 
@@ -164,7 +178,8 @@ def test_existing_standalone_mutex_locks_only_recruit_feature(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    owner = SingleInstanceLock().acquire()
+    mutex_name = _use_isolated_mutex(monkeypatch)
+    owner = SingleInstanceLock(mutex_name).acquire()
     try:
         panel = FakePanel()
         coordinator, states = _coordinator(panel)
@@ -189,7 +204,7 @@ def _pump_until(root, predicate, *, timeout: float = 4.0) -> None:
     raise AssertionError("recruit feature did not reach the expected state")
 
 
-def test_real_tk_start_keeps_both_notebook_selections_and_reaches_ready(
+def test_real_tk_start_reaches_ready_and_mode_selection_survives_rerender(
     monkeypatch, tmp_path: Path, tk_window
 ) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
@@ -197,12 +212,7 @@ def test_real_tk_start_keeps_both_notebook_selections_and_reaches_ready(
     manager = MigrationManager(paths)
     manager.create_fresh(declined=False)
     paths.initialize()
-    mutex_name = f"Local\\RecruitJobTool-GuiTest-{uuid.uuid4().hex}"
-    monkeypatch.setattr(
-        recruit_feature_module,
-        "SingleInstanceLock",
-        lambda: SingleInstanceLock(mutex_name),
-    )
+    _use_isolated_mutex(monkeypatch)
 
     root = tk_window
     root.withdraw()
@@ -245,6 +255,37 @@ def test_real_tk_start_keeps_both_notebook_selections_and_reaches_ready(
             view.recruit_panel.provider_notebook.tab(index, "state") == "normal"
             for index in range(2)
         )
+
+        recruit_controller = controller.recruit.controller
+        assert recruit_controller is not None
+        panel = view.recruit_panel
+
+        panel._controls[JobSource.JOBINS]["merge"].invoke()
+        root.update_idletasks()
+        assert recruit_controller.model.providers[JobSource.JOBINS].mode is ImportMode.MERGE
+        assert panel._modes[JobSource.JOBINS].get() == ImportMode.MERGE.value
+        assert panel._controls[JobSource.JOBINS]["merge"].instate(["selected"])
+
+        panel.select_provider(JobSource.CAREERBANK)
+        panel._controls[JobSource.CAREERBANK]["merge"].invoke()
+        root.update_idletasks()
+        assert recruit_controller.model.providers[JobSource.CAREERBANK].mode is ImportMode.MERGE
+        assert panel._modes[JobSource.CAREERBANK].get() == ImportMode.MERGE.value
+
+        panel.select_provider(JobSource.JOBINS)
+        assert panel._modes[JobSource.JOBINS].get() == ImportMode.MERGE.value
+        panel._controls[JobSource.JOBINS]["replace"].invoke()
+        root.update_idletasks()
+        assert recruit_controller.model.providers[JobSource.JOBINS].mode is ImportMode.REPLACE
+        assert panel._modes[JobSource.JOBINS].get() == ImportMode.REPLACE.value
+        assert panel._controls[JobSource.JOBINS]["replace"].instate(["selected"])
+        assert recruit_controller.model.providers[JobSource.CAREERBANK].mode is ImportMode.MERGE
+
+        panel._modes[JobSource.JOBINS].set("invalid-mode")
+        panel._mode_changed(JobSource.JOBINS)
+        assert recruit_controller.model.providers[JobSource.JOBINS].mode is ImportMode.REPLACE
+        assert panel._modes[JobSource.JOBINS].get() == ImportMode.REPLACE.value
+        assert errors == []
     finally:
         if controller.recruit is not None:
             controller.recruit.shutdown()

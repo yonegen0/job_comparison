@@ -94,9 +94,16 @@ def test_help_contains_steps_and_long_notice_scrolls(tk_window) -> None:
         assert "2. 求人取得" in combined
         assert "3. 求人PDF整理" in combined
         assert "4. 求人PDF全文統合テキスト化" in combined
-        assert "5. 比較資料PDF生成" in combined
-        assert "6. 補足とショートカット" in combined
-        assert "Ctrl+1～5" in combined
+        assert "5. 対象PDFコピー" in combined
+        assert "6. 比較資料PDF生成" in combined
+        assert "7. 補足とショートカット" in combined
+        assert "Ctrl+1～6" in combined
+        assert "画面全体をマウスホイールでスクロール" in combined
+        assert "追加・更新" in combined
+        assert "HTMLに含まれない既存求人を保持" in combined
+        assert "媒体ごとにアプリ終了まで保持" in combined
+        assert "使用済みHTMLの選択だけを解除" in combined
+        assert "取り込み完了後は「置換」へ戻ります" not in combined
 
         observed = {}
 

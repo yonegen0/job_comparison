@@ -319,6 +319,8 @@ class Controller:
                 "2. ブラウザで求人検索結果HTMLを保存します。\n"
                 "3. 媒体タブでHTMLを選び、取り込みます。\n"
                 "   HTMLと同じ場所のoutputフォルダーへ出力します。\n"
+                "   取り込み方法は媒体ごとにアプリ終了まで保持します。\n"
+                "   完了後は使用済みHTMLの選択だけを解除します。\n"
                 "4. AI比較ファイルを作成します。\n"
                 "5. 条件付き比較は求人JSONと条件入りガイドを一緒に添付します。\n"
                 "   一般比較は求人JSONだけでも利用できます。",
@@ -400,7 +402,7 @@ class Controller:
 
     def _import_done(self, value) -> None:
         result, status = value
-        self._set_status(result.provider, status, clear_selection=True)
+        self._set_status(result.provider, status, clear_selected_path=True)
         if not result.changed:
             self.view.show_info(
                 DialogSpec(
@@ -500,16 +502,31 @@ class Controller:
         self.view.render(self.model)
         self.view.show_error(DialogSpec("処理を完了できませんでした", f"エラーコード: {code}"))
 
-    def _set_status(self, provider, status, *, clear_selection: bool = False) -> None:
+    def _set_status(
+        self,
+        provider: JobSource,
+        status: ProviderStatus,
+        *,
+        clear_selected_path: bool = False,
+    ) -> None:
         state = self.model.providers[provider]
         providers = dict(self.model.providers)
         providers[provider] = replace(
             state,
             status=status,
-            selected_path=None if clear_selection else state.selected_path,
-            mode=ImportMode.REPLACE if clear_selection else state.mode,
+            selected_path=None if clear_selected_path else state.selected_path,
+            mode=self._normalize_mode_for_status(state.mode, status),
         )
         self.model = replace(self.model, providers=providers)
+
+    @staticmethod
+    def _normalize_mode_for_status(
+        current_mode: ImportMode,
+        status: ProviderStatus,
+    ) -> ImportMode:
+        if status.health is not ProviderHealth.READY or status.output_error:
+            return ImportMode.REPLACE
+        return current_mode
 
     def _update_active(self, **changes) -> None:
         provider = self.model.active_provider
