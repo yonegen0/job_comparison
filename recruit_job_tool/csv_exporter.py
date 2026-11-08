@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import csv
+import io
 import os
 from pathlib import Path
 import tempfile
@@ -64,6 +65,36 @@ _NUMERIC_COLUMNS = frozenset({"schema_version", "salary_min", "salary_max"})
 _TEXT_COLUMNS = frozenset(CSV_COLUMNS) - _NUMERIC_COLUMNS
 
 
+def serialize_jobs_csv(
+    provider: JobSource | str, jobs: Iterable[Job], *, validator: Validator | None = None,
+) -> bytes:
+    """求人を検証し、ファイルを変更せず正式CSVのバイト列へ変換する。"""
+    source = _coerce_source(provider)
+    materialized = list(jobs)
+    if not materialized:
+        raise CsvExportError("0件の求人はCSV出力できません")
+    validator = validator or Validator()
+    seen_ids: set[str] = set()
+    for job in materialized:
+        result = validator.validate(job)
+        if not result.is_valid:
+            raise CsvExportError(f"不正な求人が含まれています: {','.join(result.errors)}")
+        if job.source is not source:
+            raise CsvExportError("出力先媒体と求人の媒体が一致しません")
+        if job.internal_job_id in seen_ids:
+            raise CsvExportError("重複する求人IDが含まれています")
+        seen_ids.add(job.internal_job_id)
+    try:
+        stream = io.StringIO(newline="")
+        writer = csv.DictWriter(stream, fieldnames=CSV_COLUMNS, extrasaction="raise", lineterminator="\r\n")
+        writer.writeheader()
+        for job in materialized:
+            writer.writerow(_job_to_csv_row(job))
+        return stream.getvalue().encode("utf-8-sig")
+    except (UnicodeError, csv.Error, TypeError, ValueError) as exc:
+        raise CsvExportError("求人をCSVへ変換できませんでした") from exc
+
+
 class CsvExporter:
     """全テキストセルをapostropheで無害化し、媒体別CSVを公開する。"""
 
@@ -78,45 +109,21 @@ class CsvExporter:
     def export(self, provider: JobSource | str, jobs: Iterable[Job]) -> Path:
         source = _coerce_source(provider)
         materialized = list(jobs)
-        if not materialized:
-            raise CsvExportError("0件の求人はCSV出力できません")
-
-        seen_ids: set[str] = set()
-        for job in materialized:
-            result = self._validator.validate(job)
-            if not result.is_valid:
-                raise CsvExportError(
-                    f"不正な求人が含まれています: {','.join(result.errors)}"
-                )
-            if job.source is not source:
-                raise CsvExportError("出力先媒体と求人の媒体が一致しません")
-            if job.internal_job_id in seen_ids:
-                raise CsvExportError("重複する求人IDが含まれています")
-            seen_ids.add(job.internal_job_id)
+        content = serialize_jobs_csv(source, materialized, validator=self._validator)
 
         destination = self._output_dir / f"{source.value.lower()}_jobs.csv"
         temporary_path: Path | None = None
         try:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8-sig",
-                newline="",
+                mode="wb",
                 dir=destination.parent,
                 prefix=f".{destination.name}.",
                 suffix=".tmp",
                 delete=False,
             ) as temporary:
                 temporary_path = Path(temporary.name)
-                writer = csv.DictWriter(
-                    temporary,
-                    fieldnames=CSV_COLUMNS,
-                    extrasaction="raise",
-                    lineterminator="\r\n",
-                )
-                writer.writeheader()
-                for job in materialized:
-                    writer.writerow(_job_to_csv_row(job))
+                temporary.write(content)
                 temporary.flush()
                 os.fsync(temporary.fileno())
 

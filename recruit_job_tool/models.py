@@ -16,6 +16,11 @@ class JobSource(str, Enum):
     CAREERBANK = "CAREERBANK"
 
 
+class AnalysisOutputMode(str, Enum):
+    JSON_WITH_GUIDE = "json_with_guide"
+    JSON_ONLY = "json_only"
+
+
 class JobStatus(str, Enum):
     ACTIVE = "active"
     CLOSED = "closed"

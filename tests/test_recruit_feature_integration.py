@@ -108,7 +108,7 @@ class FakePanel:
         pass
 
     def choose_html(self, *, initial_directory):
-        return None
+        return ()
 
     def open(self, path) -> None:
         pass

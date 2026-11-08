@@ -29,5 +29,5 @@ include = [
 ]
 
 [tool.setuptools.package-data]
-job_comparison_app = ["assets/*.ico"]
+job_comparison_app = ["assets/*.ico", "assets/pdf_comparison_guide.md"]
 job_comparison_report = ["templates/*.html", "templates/*.css"]

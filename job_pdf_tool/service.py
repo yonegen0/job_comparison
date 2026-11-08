@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from job_comparison_app.fingerprints import (
@@ -10,6 +10,8 @@ from job_comparison_app.fingerprints import (
     fingerprint_pdf_inventory,
 )
 from job_comparison_app.models import FileFingerprint, PdfInventoryItem, RunLevel
+from job_comparison_app.pdf_comparison_guide import render_pdf_comparison_guide, template_path
+from recruit_job_tool.candidate_profile import CandidateProfile
 
 from .analysis import analyze
 from .models import DocumentResult
@@ -43,6 +45,8 @@ class PdfOrganizationRequest:
     job_info_json: Path | None = None
     report_json: Path | None = None
     import_main_csv: Path | None = None
+    comparison_guide_path: Path | None = None
+    candidate_profile: CandidateProfile | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -56,6 +60,9 @@ class PdfOrganizationPlan:
     level: RunLevel
     pdf_inventory: tuple[PdfInventoryItem, ...]
     file_fingerprints: tuple[FileFingerprint, ...]
+    comparison_guide_path: Path | None = None
+    comparison_guide_content: str | None = field(default=None, repr=False)
+    candidate_applied: bool = False
 
 
 @dataclass(slots=True)
@@ -113,6 +120,8 @@ def result_level(results: list[DocumentResult], stale_count: int = 0) -> RunLeve
 
 
 def prepare_pdf_organization(request: PdfOrganizationRequest) -> PdfOrganizationPlan:
+    if request.candidate_profile is not None and request.comparison_guide_path is None:
+        raise ValueError("転職者条件を使用する場合は比較指示書の出力先が必要です。")
     input_dir = request.input_dir.resolve()
     if not input_dir.is_dir():
         raise ValueError(f"入力フォルダーが存在しません: {input_dir}")
@@ -146,6 +155,21 @@ def prepare_pdf_organization(request: PdfOrganizationRequest) -> PdfOrganization
     overlap = [path for path in (job_info_json, report_json) if path in protected_inputs]
     if overlap:
         raise ValueError(f"入力ファイルをJSON出力先には指定できません: {overlap[0]}")
+    guide_path = request.comparison_guide_path
+    guide_content = None
+    if guide_path is not None:
+        _validate_output_target(guide_path)
+        for parent in guide_path.parents:
+            if _is_reparse_like(parent):
+                raise ValueError("比較指示書の出力先にリンクは指定できません。")
+        guide_path = guide_path.resolve()
+        if guide_path.suffix.casefold() != ".md":
+            raise ValueError("比較指示書の出力先はMarkdownにしてください。")
+        if guide_path in protected_inputs | {job_info_json, report_json, template_path().resolve()}:
+            raise ValueError("比較指示書の出力先が入力または他の出力と重なっています。")
+        guide_content = render_pdf_comparison_guide(
+            job_info_filename=job_info_json.name, candidate_profile=request.candidate_profile,
+        )
     results = analyze(input_dir, aliases_path)
     job_info = prepare_job_info_document(results, job_info_json, import_main_csv)
     normalized = PdfOrganizationRequest(
@@ -154,8 +178,12 @@ def prepare_pdf_organization(request: PdfOrganizationRequest) -> PdfOrganization
         job_info_json,
         report_json,
         import_main_csv,
+        guide_path,
+        request.candidate_profile,
     )
     fingerprint_paths = [job_info_json, report_json]
+    if guide_path is not None:
+        fingerprint_paths.append(guide_path)
     if aliases_path:
         fingerprint_paths.append(aliases_path)
     if import_main_csv:
@@ -170,6 +198,9 @@ def prepare_pdf_organization(request: PdfOrganizationRequest) -> PdfOrganization
         level=result_level(results, len(job_info.stale_jobs)),
         pdf_inventory=fingerprint_pdf_inventory(input_dir),
         file_fingerprints=fingerprint_files(fingerprint_paths),
+        comparison_guide_path=guide_path,
+        comparison_guide_content=guide_content,
+        candidate_applied=request.candidate_profile is not None,
     )
 
 
@@ -217,6 +248,14 @@ def _remove_empty_directories(paths: list[Path]) -> None:
 def commit_pdf_organization(plan: PdfOrganizationPlan) -> PdfOrganizationResult:
     input_dir = plan.request.input_dir
     output_directories = (plan.job_info_json.parent, plan.report_json.parent)
+    if plan.comparison_guide_path is not None:
+        if plan.comparison_guide_content is None:
+            raise ValueError("比較指示書の本文が準備されていません。")
+        _validate_output_target(plan.comparison_guide_path)
+        for parent in plan.comparison_guide_path.parents:
+            if _is_reparse_like(parent):
+                raise ValueError("比較指示書の出力先にリンクは指定できません。")
+        output_directories += (plan.comparison_guide_path.parent,)
     created_directories = _create_output_directories(output_directories)
     lock_directories = [input_dir, *output_directories]
     if plan.request.import_main_csv is not None:
@@ -227,6 +266,8 @@ def commit_pdf_organization(plan: PdfOrganizationPlan) -> PdfOrganizationResult:
             ensure_pdf_inventory_unchanged(input_dir, plan.pdf_inventory)
             ensure_fingerprints_unchanged(plan.file_fingerprints)
             target_paths = {plan.job_info_json.resolve(), plan.report_json.resolve()}
+            if plan.comparison_guide_path is not None:
+                target_paths.add(plan.comparison_guide_path.resolve())
             output_fingerprints = tuple(
                 fingerprint
                 for fingerprint in plan.file_fingerprints
@@ -244,6 +285,8 @@ def commit_pdf_organization(plan: PdfOrganizationPlan) -> PdfOrganizationResult:
                 import_main_csv=plan.request.import_main_csv,
                 expected_existing=expected_existing,
                 verify_outputs=lambda: ensure_fingerprints_unchanged(output_fingerprints),
+                comparison_guide_path=plan.comparison_guide_path,
+                comparison_guide_content=plan.comparison_guide_content,
             )
         completed = True
     finally:

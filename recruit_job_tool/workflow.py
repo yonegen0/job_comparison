@@ -10,7 +10,7 @@ from pathlib import Path
 from .app_paths import AppPaths
 from .constants import MAX_CURRENT_JOBS
 from .csv_exporter import CsvExporter
-from .errors import CsvExportError, JobValidationError
+from .errors import CsvExportError, JobValidationError, JobLimitError
 from .models import Job, JobSource, RawJob
 from .normalizer import Normalizer
 from .repository import Repository
@@ -68,6 +68,22 @@ class JobWorkflow:
             except (TypeError, ValueError) as error:
                 raise ValueError("mode must be replace or merge") from error
         incoming = list(jobs)
+        self.validate_import(provider, incoming, mode)
+        current = self.repository.load_all(provider)
+        if not incoming:
+            return ImportSaveResult(0, len(current))
+        self.repository.begin_run(provider)
+        saved = (
+            self.repository.replace_many(provider, incoming)
+            if mode is ImportMode.REPLACE
+            else self.repository.upsert_many(provider, incoming)
+        )
+        return ImportSaveResult(len(incoming), len(saved))
+
+    def validate_import(
+        self, provider: JobSource, incoming: list[Job], mode: ImportMode,
+    ) -> None:
+        """Validate the complete import before preparing output or backups."""
         seen: set[str] = set()
         for job in incoming:
             result = self.validator.validate(job)
@@ -79,24 +95,14 @@ class JobWorkflow:
 
         current = self.repository.load_all(provider)
         if not incoming:
-            return ImportSaveResult(0, len(current))
+            return
         projected = (
             len(incoming)
             if mode is ImportMode.REPLACE
             else len({job.internal_job_id for job in current} | seen)
         )
         if projected > MAX_CURRENT_JOBS:
-            raise JobValidationError(
-                f"現行求人が上限{MAX_CURRENT_JOBS}件を超えるため保存できません"
-            )
-
-        self.repository.begin_run(provider)
-        saved = (
-            self.repository.replace_many(provider, incoming)
-            if mode is ImportMode.REPLACE
-            else self.repository.upsert_many(provider, incoming)
-        )
-        return ImportSaveResult(len(incoming), len(saved))
+            raise JobLimitError(projected, MAX_CURRENT_JOBS)
 
     def export_current(
         self, provider: JobSource, *, output_dir: Path

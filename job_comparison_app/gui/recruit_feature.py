@@ -25,7 +25,8 @@ from recruit_job_tool.gui.controller import (
     ViewModel as RecruitControllerViewModel,
 )
 from recruit_job_tool.migration import MigrationManager
-from recruit_job_tool.models import JobSource
+from recruit_job_tool.models import AnalysisOutputMode, JobSource
+from recruit_job_tool.constants import MAX_HTML_FILES_PER_IMPORT
 from recruit_job_tool.single_instance import SingleInstanceLock
 from recruit_job_tool.workflow import ImportMode
 
@@ -61,8 +62,8 @@ class RecruitFeatureViewModel:
     providers: dict[JobSource, ProviderStatus | None] = field(
         default_factory=lambda: {provider: None for provider in JobSource}
     )
-    selected_paths: dict[JobSource, Path | None] = field(
-        default_factory=lambda: {provider: None for provider in JobSource}
+    selected_paths: dict[JobSource, tuple[Path, ...]] = field(
+        default_factory=lambda: {provider: () for provider in JobSource}
     )
     modes: dict[JobSource, ImportMode] = field(
         default_factory=lambda: {provider: ImportMode.REPLACE for provider in JobSource}
@@ -106,9 +107,13 @@ class RecruitFeaturePanel:
         self._rendering_provider_selection = False
         self._last_provider = JobSource.JOBINS
         self._controls: dict[JobSource, dict[str, tk.Widget]] = {}
-        self._paths = {provider: tk.StringVar() for provider in JobSource}
+        self._paths = {provider: tk.StringVar(value="HTML未選択") for provider in JobSource}
+        self._path_lists: dict[JobSource, tk.Listbox] = {}
         self._modes = {
             provider: tk.StringVar(value=ImportMode.REPLACE.value) for provider in JobSource
+        }
+        self._output_modes = {
+            provider: tk.StringVar(value=AnalysisOutputMode.JSON_WITH_GUIDE.value) for provider in JobSource
         }
         self._current = {provider: tk.StringVar(value="未初期化") for provider in JobSource}
         self._csv = {provider: tk.StringVar(value="未初期化") for provider in JobSource}
@@ -196,14 +201,24 @@ class RecruitFeaturePanel:
         )
         ttk.Label(
             body,
-            text="ブラウザで保存した検索結果HTMLを選択してください。求人サイトへ自動接続しません。",
+            text="Ctrl・ShiftキーでHTMLを最大5個選択できます。一覧の順に取り込みます。",
             style=STYLE_CARD_CAPTION,
         ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 8))
-        path_entry = ttk.Entry(body, textvariable=self._paths[provider], state="readonly")
-        path_entry.grid(row=2, column=0, sticky="ew", padx=(0, 8))
+        selection = ttk.Frame(body, style=STYLE_CARD_BODY)
+        selection.grid(row=2, column=0, sticky="ew", padx=(0, 8))
+        selection.columnconfigure(0, weight=1)
+        ttk.Label(selection, textvariable=self._paths[provider], style=STYLE_CARD_CAPTION).grid(
+            row=0, column=0, sticky="w"
+        )
+        path_entry = tk.Listbox(selection, height=MAX_HTML_FILES_PER_IMPORT, exportselection=False)
+        path_entry.grid(row=1, column=0, sticky="ew")
+        scrollbar = ttk.Scrollbar(selection, orient="horizontal", command=path_entry.xview)
+        scrollbar.grid(row=2, column=0, sticky="ew")
+        path_entry.configure(xscrollcommand=scrollbar.set)
+        self._path_lists[provider] = path_entry
         choose_button = ttk.Button(
             body,
-            text="HTMLを選択",
+            text=f"HTMLを選択（最大{MAX_HTML_FILES_PER_IMPORT}個）",
             style=STYLE_BUTTON,
             command=lambda p=provider: self._invoke_for(p, "choose_html"),
         )
@@ -243,11 +258,6 @@ class RecruitFeaturePanel:
         ttk.Label(output, text="2. 出力・データ管理", style=STYLE_SECTION).grid(
             row=0, column=0, columnspan=2, sticky="w"
         )
-        ttk.Label(
-            output,
-            text="CSV、AI比較ファイル、直前状態を媒体別に管理します。",
-            style=STYLE_CARD_CAPTION,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
         export_button = ttk.Button(
             output,
             text="CSVを再出力",
@@ -262,6 +272,20 @@ class RecruitFeaturePanel:
             command=lambda p=provider: self._invoke_for(p, "restore"),
         )
         restore_button.grid(row=2, column=1, sticky="ew", padx=(4, 0), pady=(0, 6))
+        output_modes = ttk.Frame(output, style=STYLE_CARD_BODY)
+        output_modes.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        guide_mode = ttk.Radiobutton(
+            output_modes, text="JSON＋プロンプトMarkdown", variable=self._output_modes[provider],
+            value=AnalysisOutputMode.JSON_WITH_GUIDE.value,
+            command=lambda p=provider: self._output_mode_changed(p),
+        )
+        guide_mode.grid(row=0, column=0, sticky="w")
+        json_mode = ttk.Radiobutton(
+            output_modes, text="JSONのみ", variable=self._output_modes[provider],
+            value=AnalysisOutputMode.JSON_ONLY.value,
+            command=lambda p=provider: self._output_mode_changed(p),
+        )
+        json_mode.grid(row=0, column=1, sticky="w", padx=(16, 0))
         analysis_button = ttk.Button(
             output,
             text="AI比較ファイルを作成",
@@ -286,6 +310,8 @@ class RecruitFeaturePanel:
             "export": export_button,
             "restore": restore_button,
             "analysis": analysis_button,
+            "output_guide": guide_mode,
+            "output_json": json_mode,
             "folder": folder_button,
         }
 
@@ -338,10 +364,23 @@ class RecruitFeaturePanel:
             self._last_provider = view_model.active_provider
             for provider, provider_model in view_model.providers.items():
                 status = provider_model.status
+                paths = provider_model.selected_paths
                 self._paths[provider].set(
-                    str(provider_model.selected_path) if provider_model.selected_path else ""
+                    f"選択済み：{len(paths)} / {MAX_HTML_FILES_PER_IMPORT}個" if paths else "HTML未選択"
                 )
+                listing = self._path_lists[provider]
+                names = [path.name.casefold() for path in paths]
+                labels = tuple(
+                    f"{index}. {path.name}" +
+                    (f" （{path.parent}）" if names.count(path.name.casefold()) > 1 else "")
+                    for index, path in enumerate(paths, 1)
+                )
+                if listing.get(0, tk.END) != labels:
+                    listing.delete(0, tk.END)
+                    for label in labels:
+                        listing.insert(tk.END, label)
                 self._modes[provider].set(provider_model.mode.value)
+                self._output_modes[provider].set(provider_model.output_mode.value)
                 if status is None:
                     self._current[provider].set("確認中")
                     self._csv[provider].set("確認中")
@@ -390,7 +429,7 @@ class RecruitFeaturePanel:
                 "merge": not effective_busy and not unavailable and not replace_required
                 and bool(status and not status.output_error),
                 "import_": not effective_busy and not unavailable
-                and provider_model.selected_path is not None,
+                and bool(provider_model.selected_paths),
                 "export": not effective_busy and bool(status)
                 and status.health is ProviderHealth.READY and bool(current_count) and output_ready,
                 "restore": not effective_busy and bool(status)
@@ -398,6 +437,8 @@ class RecruitFeaturePanel:
                 "analysis": not effective_busy and bool(status)
                 and status.health is ProviderHealth.READY and bool(current_count) and output_ready,
                 "folder": not effective_busy and output_ready,
+                "output_guide": not effective_busy and not unavailable,
+                "output_json": not effective_busy and not unavailable,
             }
             for name, widget in self._controls[provider].items():
                 if name == "path":
@@ -421,6 +462,13 @@ class RecruitFeaturePanel:
             mode = ImportMode.REPLACE
         self.controller.select_tab(provider)
         self.controller.change_mode(mode)
+
+    def _output_mode_changed(self, provider: JobSource) -> None:
+        if self.controller is None or self._host_busy or self.controller.model.busy:
+            return
+        mode = AnalysisOutputMode(self._output_modes[provider].get())
+        self.controller.select_tab(provider)
+        self.controller.change_output_mode(mode)
 
     def _tab_changed(self, event: tk.Event) -> None:
         del event
@@ -472,7 +520,13 @@ class RecruitFeaturePanel:
         self.dialogs.show(dialog_spec.title, dialog_spec.message, DialogKind.ERROR)
 
     def show_analysis_result(self, dialog_spec: AnalysisDialogSpec) -> None:
-        if dialog_spec.candidate_applied:
+        if not dialog_spec.guide_requested:
+            message = (
+                f"{dialog_spec.message}\n\n求人JSON: {dialog_spec.json_basename}\n\n"
+                "転職者条件は使用していません。求人JSONだけを保存しました。\n"
+                "分析用JSONだけでAIの一般比較を利用できます。"
+            )
+        elif dialog_spec.candidate_applied:
             guide = dialog_spec.guide_basename or "作成できませんでした"
             message = (
                 f"{dialog_spec.message}\n\n分析用求人JSON（必須）: {dialog_spec.json_basename}\n"
@@ -508,14 +562,14 @@ class RecruitFeaturePanel:
     def close(self) -> None:
         self.root.destroy()
 
-    def choose_html(self, *, initial_directory: Path | None) -> Path | None:
-        selected = filedialog.askopenfilename(
+    def choose_html(self, *, initial_directory: Path | None) -> tuple[Path, ...]:
+        selected = filedialog.askopenfilenames(
             parent=self.root,
-            title="保存済み求人検索結果HTMLを選択",
+            title=f"求人検索結果HTMLを選択（最大{MAX_HTML_FILES_PER_IMPORT}個）",
             initialdir=str(initial_directory) if initial_directory else None,
             filetypes=(("HTML", "*.html *.htm"),),
         )
-        return Path(selected) if selected else None
+        return tuple(Path(path) for path in selected)
 
     def open(self, path: Path) -> None:
         resolved = path.resolve(strict=True)
@@ -778,7 +832,7 @@ class RecruitFeatureCoordinator:
                 for provider, provider_model in controller_model.providers.items()
             },
             selected_paths={
-                provider: provider_model.selected_path
+                provider: provider_model.selected_paths
                 for provider, provider_model in controller_model.providers.items()
             },
             modes={

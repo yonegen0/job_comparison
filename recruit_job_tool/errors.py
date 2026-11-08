@@ -77,3 +77,19 @@ class PromptOutputError(RecruitJobToolError):
     """分析プロンプトを安全に出力できない場合。"""
 
     error_code = "PRM002"
+
+
+class HtmlBatchInputError(RecruitJobToolError):
+    """A specific HTML failed before the batch was saved."""
+
+    def __init__(self, filename: str, error_code: str) -> None:
+        super().__init__("HTMLを取り込めませんでした")
+        self.filename = filename
+        self.error_code = error_code
+
+
+class JobLimitError(JobValidationError):
+    def __init__(self, projected_count: int, limit: int) -> None:
+        super().__init__(f"取り込み後の求人が{projected_count}件となり、上限{limit}件を超えます")
+        self.projected_count = projected_count
+        self.limit = limit

@@ -23,6 +23,7 @@ from .pdf_outputs import (
 )
 from .recruit_feature import RecruitFeatureCoordinator, RecruitFeaturePanel
 from recruit_job_tool.models import JobSource
+from recruit_job_tool.gui.controller import CandidateProfileDecision
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,7 @@ class View(Protocol):
     copy_panel: PdfCopyPanel
     def render(self, model: ViewModel) -> None: ...
     def current_pdf_request(self) -> PdfOrganizationRequest: ...
+    def request_candidate_profile(self) -> CandidateProfileDecision: ...
     def current_export_request(self) -> PdfTextExportRequest: ...
     def current_report_request(self) -> ReportBuildRequest: ...
     def ask_organization_output_conflict(self, conflict: OrganizationOutputConflict) -> OutputConflictChoice: ...
@@ -186,7 +188,7 @@ class Controller:
         self.model = ViewModel()
         self._operation_token = 0
         self._pdf_choice: OutputConflictChoice | None = None
-        self._pdf_choice_key: tuple[Path, Path | None, Path] | None = None
+        self._pdf_choice_key: tuple[Path, Path | None, Path, bool] | None = None
         self._migration_choice: LegacyCsvMigrationChoice | None = None
         self._migration_source: Path | None = None
         self._migration_key: tuple[Path, Path] | None = None
@@ -244,19 +246,30 @@ class Controller:
     def apply_pdf(self) -> None: self._start_pdf_prepare(True)
 
     def _start_pdf_prepare(self, for_commit: bool) -> None:
+        if self.model.busy:
+            return
         try:
             request = self.view.current_pdf_request()
+            if not request.input_dir.is_dir():
+                raise InputValidationError("PDFフォルダーが存在しません。")
             if request.job_info_json is None or request.report_json is None:
                 raise InputValidationError("JSON出力先を解決できませんでした。")
+            request = replace(request, candidate_profile=None)
             paths = OrganizationOutputPaths(request.job_info_json.parent.resolve(strict=False),
-                request.job_info_json.resolve(strict=False), request.report_json.resolve(strict=False))
+                request.job_info_json.resolve(strict=False), request.report_json.resolve(strict=False), request.comparison_guide_path)
             conflict = inspect_output_conflict(paths)
         except JobComparisonAppError as exc:
             self._reject_start("PDF", exc); return
         except (OSError, ValueError) as exc:
             self._reject_start("PDF", InputValidationError(str(exc))); return
+        if for_commit and request.comparison_guide_path is not None:
+            decision = self.view.request_candidate_profile()
+            if not decision.proceed:
+                self._cancel_pdf("転職者条件を確認してください。本実行を中止しました。")
+                return
+            request = replace(request, candidate_profile=decision.profile)
         aliases = request.aliases_path.resolve(strict=False) if request.aliases_path else None
-        key = (request.input_dir.resolve(strict=False), aliases, paths.output_dir)
+        key = (request.input_dir.resolve(strict=False), aliases, paths.output_dir, paths.comparison_guide_path is not None)
         if key != self._pdf_choice_key:
             self._clear_pdf_selections()
             self._pdf_choice_key = key
@@ -305,12 +318,13 @@ class Controller:
             final = request
             if choice is OutputConflictChoice.SAVE_AS_NEW:
                 numbered = resolve_numbered_output_paths(paths)
-                final = replace(final, job_info_json=numbered.job_info_json, report_json=numbered.report_json)
+                final = replace(final, job_info_json=numbered.job_info_json, report_json=numbered.report_json,
+                                comparison_guide_path=numbered.comparison_guide_path)
             final = replace(final, import_main_csv=import_csv)
-            if require_new and any(path and path.exists() for path in (final.job_info_json, final.report_json)):
+            if require_new and any(path and path.exists() for path in (final.job_info_json, final.report_json, final.comparison_guide_path)):
                 raise InputChangedError("JSON出力先が確認中に変更されました。もう一度事前確認してください。")
             plan = self.application.prepare_pdf(final)
-            targets = {plan.job_info_json.resolve(), plan.report_json.resolve()}
+            targets = {path.resolve() for path in (plan.job_info_json, plan.report_json, plan.comparison_guide_path) if path is not None}
             if require_new and any(fp.path in targets and fp.exists for fp in plan.file_fingerprints):
                 raise InputChangedError("JSON出力先が確認中に変更されました。もう一度事前確認してください。")
             return plan
@@ -411,7 +425,7 @@ class Controller:
             pdf_migration_mode=self._pending_migration_mode); self.view.render(self.model)
         if not self.view.ask_pdf_commit(plan):
             self.model = replace(self.model, busy=False, status="本実行をキャンセルしました。", tone="normal"); self.view.render(self.model); return
-        self._submit("PDF名とJSONを確定しています…", lambda: self.application.commit_pdf(plan), self._pdf_commit_finished, already_busy=True)
+        self._submit("PDF名・JSON・比較指示書を確定しています…", lambda: self.application.commit_pdf(plan), self._pdf_commit_finished, already_busy=True)
 
     def _pdf_commit_finished(self, result: PdfOrganizationResult) -> None:
         invalidate = bool(self.model.export_plan and self.model.export_plan.request.input_dir.resolve() == result.plan.request.input_dir.resolve())
@@ -424,6 +438,15 @@ class Controller:
         message = (f"保存方法: {self.model.pdf_output_mode or '新規保存'}\n出力フォルダー: {result.plan.job_info_json.parent}\n"
             f"求人情報JSON: {result.plan.job_info_json.name}\n処理レポートJSON: {result.plan.report_json.name}\n"
             f"旧CSV移行: {self.model.pdf_migration_mode or '移行なし'}\n警告: {count}件")
+        if result.plan.comparison_guide_path is not None:
+            message += (
+                f"\n比較指示書: {result.plan.comparison_guide_path.name}\n"
+                f"比較方法: {'転職者条件付き' if result.plan.candidate_applied else '一般比較'}\n\n"
+                "次に「求人PDF全文統合テキスト化」で整理後のPDFから全文Markdownを生成してください。\n"
+                "求人情報JSON・PDF全文Markdown・比較指示書をAIへ添付し、生成された比較Markdownを比較資料PDF生成で使用します。"
+            )
+            if result.plan.summary.get("JSON出力対象", 0) == 0 and not result.job_info.stale_jobs:
+                message += "\n比較対象の求人はありません。処理結果を確認してください。"
         (self.view.show_warning if warning else self.view.show_info)("求人PDF整理が完了しました", message)
 
     def _export_preview_ready(self, plan: PdfTextExportPlan) -> None:

@@ -250,11 +250,13 @@ function Assert-Package {
         ".venv", ".venv-build", "build", "dist", "release"
     )
     $allowedGuideMarkdown = Join-Path $guide $guideMarkdownName
+    $allowedComparisonTemplate = Join-Path $internal "job_comparison_app\assets\pdf_comparison_guide.md"
+    Assert-NormalFile -Path $allowedComparisonTemplate
     $allowedGuidePngs = @($guideImageNames | ForEach-Object { Join-Path (Join-Path $guide "images") $_ })
     $bannedFiles = @($allItems | Where-Object {
         (-not $_.PSIsContainer) -and (
             $_.Extension -in @(".py", ".pyc", ".pdf", ".csv", ".json", ".jsonl") -or
-            ($_.Extension -eq ".md" -and $_.FullName -ine $allowedGuideMarkdown) -or
+            ($_.Extension -eq ".md" -and $_.FullName -ine $allowedGuideMarkdown -and $_.FullName -ine $allowedComparisonTemplate) -or
             ($_.Extension -eq ".png" -and $_.FullName -notin $allowedGuidePngs) -or
             ($_.Extension -in @(".html", ".htm") -and $_.FullName -ine (Join-Path $templateRoot "report.html")) -or
             ($_.Extension -eq ".css" -and $_.FullName -ine (Join-Path $templateRoot "report.css"))

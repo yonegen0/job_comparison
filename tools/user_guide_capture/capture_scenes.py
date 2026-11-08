@@ -54,9 +54,9 @@ ANNOTATIONS: dict[str, tuple[tuple[int, int, int, int], ...]] = {
     ),
     "03-recruit-initial-setup": ((300, 180, 740, 160), (105, 220, 170, 255), (600, 88, 650, 120)),
     "04-recruit-ready": (
-        (80, 135, 20, 110), (480, 190, 450, 230), (860, 315, 820, 270),
-        (135, 350, 190, 330), (90, 383, 160, 370), (480, 495, 450, 455),
-        (480, 530, 450, 550),
+        (80, 135, 20, 110), (480, 190, 450, 230), (860, 345, 820, 295),
+        (185, 442, 240, 425), (145, 475, 210, 460), (480, 585, 485, 540),
+        (480, 620, 485, 615),
     ),
     "05-replace-confirmation": ((480, 300, 290, 235), (480, 382, 290, 405), (500, 505, 380, 540), (635, 505, 700, 540)),
     "06-general-comparison-confirmation": ((480, 310, 255, 235), (420, 510, 305, 548), (620, 510, 710, 548), (730, 220, 775, 185)),
@@ -212,13 +212,13 @@ def _ready_recruit(view: object, *, replace: bool = False) -> None:
     providers = {
         JobSource.JOBINS: ProviderViewModel(
             provider=JobSource.JOBINS,
-            selected_path=Path(r"M:\manual-sample\求人HTML\jobins_search_20260907.html"),
+            selected_paths=tuple(Path(f"M:/manual-sample/求人HTML/求人検索結果_20260907_{index:02d}.html") for index in range(1, 6)),
             mode=jobins_mode,
             status=status(JobSource.JOBINS, 3),
         ),
         JobSource.CAREERBANK: ProviderViewModel(
             provider=JobSource.CAREERBANK,
-            selected_path=None,
+            selected_paths=(),
             mode=ImportMode.REPLACE,
             status=status(JobSource.CAREERBANK, 3),
         ),
@@ -347,7 +347,7 @@ def _replace_dialog(output_dir: Path) -> None:
         output_dir,
         lambda: view.dialogs.choose(
             "現在の求人を置き換えますか？",
-            "JoBinsの現在の求人3件を、\n選択したHTMLの求人に置き換えます。\n\nこの操作の直前状態は1世代だけ保存され、\n「直前状態へ戻す」で復元できます。\n\n続行しますか？",
+            "JoBinsの現在の求人3件を、\n選択したHTML 5個すべての求人に置き換えます。\n\nこの操作の直前状態は1世代だけ保存され、\n「直前状態へ戻す」で復元できます。\n\n続行しますか？",
             actions=(
                 DialogAction("キャンセル", result=False, is_default=True),
                 DialogAction("置き換える", result=True, primary=True),
@@ -431,6 +431,8 @@ def _pdf_plan() -> object:
         summary={"JSON出力対象": 2, "リネーム対象": 2, "JSON除外": 1, "成功": 1, "部分成功": 1, "エラー": 1},
         job_info_json=Path(r"M:\manual-sample\求人PDF\output\求人情報.json"),
         report_json=Path(r"M:\manual-sample\求人PDF\output\処理レポート.json"),
+        comparison_guide_path=Path(r"M:\manual-sample\求人PDF\output\求人PDFから比較資料に.md"),
+        candidate_applied=False,
     )
 
 

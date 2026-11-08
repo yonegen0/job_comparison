@@ -67,6 +67,21 @@ def load_prompt_jobs(
         raw = input_path.read_bytes()
     except OSError as exc:
         raise PromptInputError("入力CSVを読み込めません") from exc
+    return load_prompt_jobs_from_bytes(
+        raw, expected_source=source, max_bytes=max_bytes, max_rows=max_rows,
+    )
+
+
+def load_prompt_jobs_from_bytes(
+    raw: bytes, *, expected_source: JobSource,
+    max_bytes: int = DEFAULT_MAX_BYTES, max_rows: int = DEFAULT_MAX_ROWS,
+) -> list[PromptJob]:
+    """ファイル入力と同じ規則で、メモリ上の正式CSVを検証する。"""
+    source = _coerce_source(expected_source)
+    if max_bytes < 1 or max_rows < 1:
+        raise ValueError("max_bytes and max_rows must be positive")
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= max_bytes:
+        raise PromptInputError("入力CSVのサイズが許容範囲外です")
     if not raw.startswith(_BOM):
         raise PromptInputError("入力CSVにUTF-8 BOMがありません")
     if b"\x00" in raw:

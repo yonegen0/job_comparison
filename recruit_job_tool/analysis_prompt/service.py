@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from recruit_job_tool.candidate_profile import (
     CANDIDATE_PROFILE_FORMAT,
@@ -17,12 +17,14 @@ from recruit_job_tool.candidate_profile import (
     _candidate_profile_from_json,
     _candidate_profile_sha256,
 )
-from recruit_job_tool.errors import PromptOutputError
-from recruit_job_tool.models import JobSource
+from recruit_job_tool.errors import PromptInputError, PromptOutputError
+from recruit_job_tool.models import Job, JobSource
+from recruit_job_tool.csv_exporter import serialize_jobs_csv
 
-from .csv_input import load_prompt_jobs
+from .csv_input import load_prompt_jobs, load_prompt_jobs_from_bytes
 from .models import AnalysisGenerationResult, PromptGenerationResult
 from .renderer import (
+    CANDIDATE_GUIDE_TEMPLATE_VERSION,
     render_analysis_guide,
     render_analysis_prompt,
     render_candidate_analysis_guide,
@@ -51,7 +53,8 @@ _GUIDE_FAILURE_WARNING = (
 
 def generate_analysis_files(
     *,
-    input_path: Path,
+    input_path: Path | None = None,
+    input_jobs: Sequence[Job] | None = None,
     json_output_path: Path,
     provider: JobSource,
     guide_output_path: Path | None = None,
@@ -67,12 +70,20 @@ def generate_analysis_files(
         raise PromptOutputError(
             "ガイドを生成しない場合はMarkdown出力先を指定できません"
         )
-    input_file = Path(input_path)
+    if (input_path is None) == (input_jobs is None):
+        raise PromptInputError("入力CSVと保存求人のどちらか一方だけを指定してください")
+    input_file = Path(input_path) if input_path is not None else None
     json_file = Path(json_output_path)
     guide_file = Path(guide_output_path) if guide_output_path is not None else None
     _validate_analysis_paths(input_file, json_file, guide_file)
 
-    jobs = load_prompt_jobs(input_file, expected_source=provider)
+    if input_file is not None:
+        jobs = load_prompt_jobs(input_file, expected_source=provider)
+    else:
+        assert input_jobs is not None
+        jobs = load_prompt_jobs_from_bytes(
+            serialize_jobs_csv(provider, input_jobs), expected_source=provider,
+        )
     company_count = len({job.company for job in jobs if job.company is not None})
     instant = generated_at or datetime.now(timezone.utc)
     json_content = render_job_data_json_v4(
@@ -197,17 +208,17 @@ def write_file_atomic(
 
 
 def _validate_analysis_paths(
-    input_path: Path,
+    input_path: Path | None,
     json_path: Path,
     guide_path: Path | None,
 ) -> None:
-    input_resolved = _resolve_path(input_path)
+    input_resolved = _resolve_path(input_path) if input_path is not None else None
     outputs = [_resolve_output_path(json_path)]
     if guide_path is not None:
         outputs.append(_resolve_output_path(guide_path))
     for output in outputs:
         _validate_destination(output)
-        if _paths_match(input_resolved, output):
+        if input_resolved is not None and _paths_match(input_resolved, output):
             raise PromptOutputError("入力CSVと出力先には異なるパスが必要です")
     if len(outputs) == 2 and _paths_match(outputs[0], outputs[1]):
         raise PromptOutputError("JSONとMarkdownに同じ出力先は指定できません")
@@ -305,7 +316,7 @@ def write_candidate_analysis_pair_atomic(
     json_content: str,
     expected_json: object,
 ) -> None:
-    """v4求人JSONとv9条件付きガイドを1トランザクションで公開する。"""
+    """v4求人JSONと条件付きガイドを1トランザクションで公開する。"""
 
     def verify(
         *,
@@ -501,7 +512,7 @@ def _verify_candidate_analysis_pair(
         markdown_text = published_markdown.decode("utf-8", errors="strict")
         if "\r" in markdown_text:
             raise PromptOutputError("条件入りガイドの改行コードが不正です")
-        if markdown_text.count("prompt_template_version: job-comparison-v9") != 1:
+        if markdown_text.splitlines().count(f"prompt_template_version: {CANDIDATE_GUIDE_TEMPLATE_VERSION}") != 1:
             raise PromptOutputError("条件入りガイドのテンプレート版が不正です")
         if markdown_text.splitlines().count("## 転職者条件") != 1:
             raise PromptOutputError("条件入りガイドの転職者条件ブロックが不正です")

@@ -7,6 +7,7 @@ from enum import Enum
 from pathlib import Path
 
 from ..errors import InputValidationError
+from ..pdf_comparison_guide import COMPARISON_GUIDE_NAME
 
 
 JOB_INFO_JSON_NAME = "求人情報.json"
@@ -31,6 +32,11 @@ class OrganizationOutputPaths:
     output_dir: Path
     job_info_json: Path
     report_json: Path
+    comparison_guide_path: Path | None = None
+
+    @property
+    def targets(self) -> tuple[Path, ...]:
+        return tuple(path for path in (self.job_info_json, self.report_json, self.comparison_guide_path) if path is not None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +70,7 @@ def _validate_output_target(path: Path) -> None:
 def resolve_base_output_paths(
     input_dir: Path,
     explicit_output_dir: Path | None,
+    *, include_guide: bool = True,
 ) -> OrganizationOutputPaths:
     resolved_input = Path(input_dir).resolve(strict=False)
     output_dir = (
@@ -76,15 +83,18 @@ def resolve_base_output_paths(
     report_json = (output_dir / REPORT_JSON_NAME).resolve(strict=False)
     _validate_output_target(job_info_json)
     _validate_output_target(report_json)
-    return OrganizationOutputPaths(output_dir, job_info_json, report_json)
+    guide = output_dir / COMPARISON_GUIDE_NAME if include_guide else None
+    if guide is not None:
+        _validate_output_target(guide)
+    return OrganizationOutputPaths(output_dir, job_info_json, report_json, guide)
 
 
 def inspect_output_conflict(paths: OrganizationOutputPaths) -> OrganizationOutputConflict:
     _validate_output_directory(paths.output_dir)
-    _validate_output_target(paths.job_info_json)
-    _validate_output_target(paths.report_json)
+    for path in paths.targets:
+        _validate_output_target(path)
     existing = tuple(
-        path for path in (paths.job_info_json, paths.report_json) if path.exists()
+        path for path in paths.targets if path.exists()
     )
     suggested = resolve_numbered_output_paths(paths) if existing else None
     return OrganizationOutputConflict(paths, existing, suggested)
@@ -102,9 +112,12 @@ def resolve_numbered_output_paths(base_paths: OrganizationOutputPaths) -> Organi
         ).resolve(strict=False)
         _validate_output_target(job_info_json)
         _validate_output_target(report_json)
-        if not job_info_json.exists() and not report_json.exists():
+        guide = (base_paths.output_dir / f"求人PDFから比較資料に({index}).md") if base_paths.comparison_guide_path is not None else None
+        if guide is not None:
+            _validate_output_target(guide)
+        if not job_info_json.exists() and not report_json.exists() and (guide is None or not guide.exists()):
             return OrganizationOutputPaths(
-                base_paths.output_dir, job_info_json, report_json
+                base_paths.output_dir, job_info_json, report_json, guide
             )
         index += 1
 

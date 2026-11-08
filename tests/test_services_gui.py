@@ -13,6 +13,7 @@ from job_pdf_tool.models import DocumentResult
 from job_pdf_tool.service import PdfOrganizationRequest, commit_pdf_organization, prepare_pdf_organization
 from job_pdf_tool.transaction import ApplyError
 from pdf_job_exporter.service import PdfTextExportRequest
+from recruit_job_tool.gui.controller import CandidateProfileDecision
 
 
 class ImmediateRunner:
@@ -41,6 +42,7 @@ class FakeView:
         self.models = []; self.notices = []; self.conflicts = []; self.closed = False
     def render(self, model): self.models.append(model)
     def current_pdf_request(self): return self.pdf_request
+    def request_candidate_profile(self): return CandidateProfileDecision(proceed=True)
     def current_export_request(self): return self.export_request
     def current_report_request(self): return self.report_request
     def ask_organization_output_conflict(self, conflict): self.conflicts.append(conflict); return self.conflict_choice
@@ -64,6 +66,7 @@ class RecordingApplication:
         return SimpleNamespace(request=request, level=RunLevel.SUCCESS, results=[],
             job_info=SimpleNamespace(stale_jobs=[]), summary={"リネーム対象": 0, "JSON出力対象": 0, "JSON除外": 0},
             job_info_json=request.job_info_json, report_json=request.report_json,
+            comparison_guide_path=request.comparison_guide_path, candidate_applied=request.candidate_profile is not None,
             file_fingerprints=fingerprint_files([request.job_info_json, request.report_json]))
     def commit_pdf(self, plan):
         self.commits += 1

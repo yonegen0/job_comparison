@@ -141,6 +141,13 @@ class JobinsSearchHtmlImporter:
 
     def load(self, path: Path, *, limit: int) -> list[RawJob]:
         _validate_limit(limit)
+        return self._load(path, limit=limit)
+
+    def load_all(self, path: Path) -> list[RawJob]:
+        """Parse all cards; the batch workflow enforces the final job limit."""
+        return self._load(path, limit=None)
+
+    def _load(self, path: Path, *, limit: int | None) -> list[RawJob]:
         source_path = Path(path)
         if source_path.suffix.lower() not in {".html", ".htm"}:
             raise UnsupportedFormatError(

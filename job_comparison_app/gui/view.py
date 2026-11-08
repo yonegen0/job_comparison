@@ -12,6 +12,7 @@ from job_pdf_tool.service import PdfOrganizationPlan, PdfOrganizationRequest
 from pdf_job_exporter.service import PdfTextExportPlan, PdfTextExportRequest
 from recruit_job_tool.candidate_profile import _CandidateProfileFieldError
 from recruit_job_tool.gui.controller import CandidateProfileDecision
+from recruit_job_tool.models import AnalysisOutputMode
 
 from job_comparison_app import __version__
 
@@ -155,6 +156,8 @@ class TkView:
         self.pdf_input = tk.StringVar()
         self.pdf_aliases = tk.StringVar()
         self.pdf_output_dir = tk.StringVar()
+        self.pdf_output_mode = tk.StringVar(value=AnalysisOutputMode.JSON_WITH_GUIDE.value)
+        self.pdf_output_hint = tk.StringVar()
         self.pdf_output_summary = tk.StringVar(value="保存先は事前確認後に表示します。")
         self.export_input = tk.StringVar()
         self.export_output = tk.StringVar(value="PDFフォルダーを選択すると表示します。")
@@ -369,16 +372,26 @@ class TkView:
             fields,
             1,
             0,
-            "JSON出力フォルダー（任意）",
+            "出力フォルダー（任意）",
             self.pdf_output_dir,
             self._choose_pdf_output_dir,
             columnspan=2,
         )
         ttk.Label(
             form,
-            text="空欄の場合は、PDFフォルダー内の「output」に求人情報.jsonと処理レポート.jsonを保存します。",
+            textvariable=self.pdf_output_hint,
             style=STYLE_CARD_CAPTION,
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
+        output_modes = ttk.Frame(form, style=STYLE_CARD_BODY)
+        output_modes.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        for index, (label, mode) in enumerate((
+            ("JSON＋プロンプトMarkdown", AnalysisOutputMode.JSON_WITH_GUIDE),
+            ("JSONのみ", AnalysisOutputMode.JSON_ONLY),
+        )):
+            button = ttk.Radiobutton(output_modes, text=label, variable=self.pdf_output_mode, value=mode.value)
+            button.grid(row=0, column=index, sticky="w", padx=(0 if index == 0 else 16, 0))
+            self._input_widgets.append(button)
+        self._update_pdf_output_hint()
 
         result_card = self.visuals.create_card(self.pdf_tab, padding=8)
         result_card.grid(row=2, column=0, sticky="nsew")
@@ -743,7 +756,7 @@ class TkView:
         return tree, empty
 
     def _bind_variable_changes(self) -> None:
-        for variable in (self.pdf_input, self.pdf_aliases, self.pdf_output_dir):
+        for variable in (self.pdf_input, self.pdf_aliases, self.pdf_output_dir, self.pdf_output_mode):
             variable.trace_add("write", lambda *args: self._changed_pdf())
         self.export_input.trace_add("write", lambda *args: self._changed_export())
         for variable in (self.report_input, self.report_manifest, self.report_date, self.report_keep_html):
@@ -753,8 +766,13 @@ class TkView:
         self.report_verification_csv.trace_add("write", lambda *args: self._verification_output_changed())
 
     def _changed_pdf(self) -> None:
+        self._update_pdf_output_hint()
         if not self._suppress_changes and self.controller:
             self.controller.invalidate_pdf()
+
+    def _update_pdf_output_hint(self) -> None:
+        files = "JSON2個と比較指示Markdown" if self.pdf_output_mode.get() == AnalysisOutputMode.JSON_WITH_GUIDE.value else "JSON2個"
+        self.pdf_output_hint.set(f"出力先が空欄の場合はPDFフォルダー内の「output」に{files}を保存します。")
 
     def _changed_report(self) -> None:
         if not self._suppress_changes and self.controller:
@@ -1018,6 +1036,9 @@ class TkView:
             return CandidateProfileDecision(proceed=False)
         return CandidateProfileDecision(proceed=True, profile=profile)
 
+    def request_candidate_profile(self) -> CandidateProfileDecision:
+        return self._resolve_candidate_profile()
+
     def _top_tab_changed(self, event: tk.Event) -> None:
         del event
         if self._changing_tab_programmatically:
@@ -1077,32 +1098,34 @@ class TkView:
         paths = resolve_base_output_paths(
             input_dir,
             Path(raw_output_dir) if raw_output_dir else None,
+            include_guide=self.pdf_output_mode.get() == AnalysisOutputMode.JSON_WITH_GUIDE.value,
         )
         return PdfOrganizationRequest(
             input_dir=input_dir,
             aliases_path=Path(self.pdf_aliases.get()) if self.pdf_aliases.get().strip() else None,
             job_info_json=paths.job_info_json,
             report_json=paths.report_json,
+            comparison_guide_path=paths.comparison_guide_path,
         )
 
     def ask_organization_output_conflict(self, conflict: OrganizationOutputConflict) -> OutputConflictChoice:
         suggested = conflict.suggested_paths
         existing = "\n".join(f"- {path.name}" for path in conflict.existing_paths)
         suggestion = (
-            f"{suggested.job_info_json.name}\n{suggested.report_json.name}"
+            "\n".join(path.name for path in suggested.targets)
             if suggested is not None
             else "—"
         )
         message = (
             f"出力フォルダー:\n{conflict.base_paths.output_dir}\n\n"
-            f"既に存在するJSON:\n{existing}\n\n"
+            f"既に存在する出力ファイル:\n{existing}\n\n"
             "置換する:\n"
             "求人情報JSONは追加項目とPDF未検出jobを保持して更新し、"
-            "処理レポートJSONは今回の結果で再生成します。\n\n"
+            "処理レポートJSONと比較指示Markdownは今回の内容で再生成します。\n\n"
             f"別名で保存する候補:\n{suggestion}\n"
-            "既存JSONは変更しません。"
+            "既存のJSONとMarkdownは変更しません。"
         )
-        return self.dialogs.ask_output_conflict("既存のJSONがあります", message)
+        return self.dialogs.ask_output_conflict("既存の出力ファイルがあります", message)
 
     def choose_legacy_csv(self, candidates: tuple[Path, ...]) -> Path | None:
         selected = filedialog.askopenfilename(
@@ -1146,7 +1169,7 @@ class TkView:
 
     def ask_pdf_commit(self, plan: PdfOrganizationPlan) -> bool:
         summary = plan.summary
-        overwrite = [path.name for path in (plan.job_info_json, plan.report_json) if path.exists()]
+        overwrite = [path.name for path in (plan.job_info_json, plan.report_json, plan.comparison_guide_path) if path is not None and path.exists()]
         output_mode = self._last_model.pdf_output_mode if self._last_model else None
         mode_note = {
             "新規保存": "新しいJSONを作成します。",
@@ -1164,11 +1187,13 @@ class TkView:
             f"出力フォルダー: {plan.job_info_json.parent}\n"
             f"求人情報JSON: {plan.job_info_json.name}\n"
             f"処理レポートJSON: {plan.report_json.name}\n"
+            f"比較指示書: {plan.comparison_guide_path.name if plan.comparison_guide_path else 'なし'}\n"
+            f"比較方法: {'転職者条件付き' if plan.candidate_applied else '一般比較'}\n"
             f"上書き対象: {', '.join(overwrite) if overwrite else 'なし'}\n"
             f"旧CSV移行: {migration_source if migration_source else 'なし'}\n"
             f"{'旧CSVは変更しません。' if migration_source else ''}\n"
             f"{mode_note}\n\n"
-            "除外されたPDFは移動・削除しません。PDF名とJSONを確定しますか？"
+            "除外されたPDFは移動・削除しません。PDF名・JSON・比較指示書を確定しますか？"
         )
         return self.dialogs.ask("求人PDF整理を実行しますか？", message, "実行")
 
@@ -1277,7 +1302,7 @@ class TkView:
         self.candidate_panel.set_host_busy(model.busy)
         self.recruit_panel.set_host_busy(model.busy)
         self._set_top_notebook_busy(model.busy)
-        self._render_pdf_plan(model.pdf_plan, model.pdf_output_mode)
+        self._render_pdf_plan(model.pdf_plan, model.pdf_output_mode, candidate_confirmed=model.busy or model.pdf_result is not None)
         self._render_export_plan(model.export_plan)
         self._render_report_plan(model.report_plan)
 
@@ -1288,7 +1313,7 @@ class TkView:
             return min(95.0, ((event.document_index - 1 + page_fraction) / event.document_count) * 95.0)
         return {"discovered": 0.0, "building": 96.0, "committing": 98.0, "complete": 100.0}.get(event.stage, 0.0)
 
-    def _render_pdf_plan(self, plan: PdfOrganizationPlan | None, output_mode: str | None = None) -> None:
+    def _render_pdf_plan(self, plan: PdfOrganizationPlan | None, output_mode: str | None = None, *, candidate_confirmed: bool = False) -> None:
         self._clear_tree(self.pdf_tree)
         if plan is None:
             self._reset_metrics(self.PDF_PRIMARY, self.PDF_SECONDARY, self._pdf_stat_vars)
@@ -1306,6 +1331,9 @@ class TkView:
         self.pdf_output_summary.set(
             f"保存方法: {output_mode or '新規保存'}　保存先: {plan.job_info_json.parent}\n"
             f"求人情報JSON: {plan.job_info_json.name}　処理レポートJSON: {plan.report_json.name}"
+            + (f"\n比較指示書: {plan.comparison_guide_path.name}　" +
+               (('転職者条件付き' if plan.candidate_applied else '一般比較') if candidate_confirmed else '転職者条件は本実行時に確認します。')
+               if plan.comparison_guide_path is not None else "")
         )
         for result in plan.results:
             messages = [result.error] if result.error else []

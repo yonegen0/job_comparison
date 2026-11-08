@@ -12,14 +12,16 @@ from .analysis_prompt.models import AnalysisGenerationResult, PromptGenerationRe
 from .analysis_prompt.service import generate_analysis_files, generate_analysis_prompt
 from .candidate_profile import CandidateProfile
 from .app_paths import AppPaths
-from .constants import MAX_CURRENT_JOBS
+from .constants import MAX_CURRENT_JOBS, MAX_HTML_FILES_PER_IMPORT
 from .errors import (
     CsvExportError,
+    HtmlBatchInputError,
+    JobValidationError,
     OutputLocationError,
     RecruitJobToolError,
     RunLogError,
 )
-from .models import JobSource
+from .models import Job, JobSource
 from .output_location import OutputLocationStore, StagedOutputLocation
 from .providers.careerbank import CareerBankProvider, CareerBankSearchHtmlImporter
 from .providers.errors import ProviderError
@@ -149,19 +151,59 @@ class RecruitJobApplication:
         input_path: Path,
         mode: ImportMode,
     ) -> ImportResult:
+        return self._import_html(
+            provider=provider, input_paths=(input_path,), mode=mode, batch=False,
+        )
+
+    def import_saved_html_batch(
+        self, *, provider: JobSource, input_paths: tuple[Path, ...], mode: ImportMode,
+    ) -> ImportResult:
+        if not 1 <= len(input_paths) <= MAX_HTML_FILES_PER_IMPORT:
+            raise ValueError(f"HTMLは1～{MAX_HTML_FILES_PER_IMPORT}個で指定してください")
+        return self._import_html(
+            provider=provider, input_paths=sort_html_paths(input_paths), mode=mode, batch=True,
+        )
+
+    def _import_html(
+        self, *, provider: JobSource, input_paths: tuple[Path, ...],
+        mode: ImportMode, batch: bool,
+    ) -> ImportResult:
+        mode = ImportMode(mode)
         logger = self._start_log(provider)
         count = 0
         staged: StagedOutputLocation | None = None
         try:
-            if provider is JobSource.JOBINS:
-                raw = JobinsProvider(importer=JobinsSearchHtmlImporter()).load(
-                    input_path, limit=MAX_CURRENT_JOBS
-                )
-            else:
-                raw = CareerBankProvider(
-                    importer=CareerBankSearchHtmlImporter()
-                ).load(input_path, limit=MAX_CURRENT_JOBS)
-            jobs = self._workflow.normalize_all(raw)
+            combined: dict[str, Job] = {}
+            for input_path in input_paths:
+                try:
+                    if provider is JobSource.JOBINS:
+                        jobins_importer = JobinsSearchHtmlImporter()
+                        raw = (
+                            jobins_importer.load_all(input_path)
+                            if batch else JobinsProvider(importer=jobins_importer).load(
+                                input_path, limit=MAX_CURRENT_JOBS
+                            )
+                        )
+                    else:
+                        careerbank_importer = CareerBankSearchHtmlImporter()
+                        raw = (
+                            careerbank_importer.load(input_path)
+                            if batch else CareerBankProvider(importer=careerbank_importer).load(
+                                input_path, limit=MAX_CURRENT_JOBS
+                            )
+                        )
+                    parsed = self._workflow.normalize_all(raw)
+                    if len({job.internal_job_id for job in parsed}) != len(parsed):
+                        raise JobValidationError("取込対象に重複する求人IDがあります")
+                except Exception as error:
+                    if not batch:
+                        raise
+                    code = _error_code(error) if isinstance(error, (RecruitJobToolError, ProviderError)) else "APP001"
+                    raise HtmlBatchInputError(input_path.name, code) from error
+                for job in parsed:
+                    combined[job.internal_job_id] = job
+            jobs = list(combined.values())
+            self._workflow.validate_import(provider, jobs, mode)
             if not jobs:
                 saved = self._workflow.save_import(provider, jobs, mode)
                 warnings = self._finish_log(logger, 0)
@@ -170,7 +212,7 @@ class RecruitJobApplication:
                 )
             output_directory, update_location = self._import_output_directory(
                 provider=provider,
-                input_path=input_path,
+                input_path=input_paths[0],
                 mode=mode,
             )
             output_directory = self._output_locations.prepare_directory(
@@ -328,12 +370,17 @@ class RecruitJobApplication:
                 "ガイドを生成しない場合はMarkdown出力先を指定できません"
             )
         output_directory: Path | None = None
+        input_jobs: list[Job] | None = None
         if input_path is None:
             output_directory = self.ensure_output_directory(provider=provider)
-            input_path, count = self._workflow.export_current(
-                provider, output_dir=output_directory
-            )
-            if input_path is None or count == 0:
+            if not include_guide:
+                input_jobs = self._workflow.repository.load_all(provider)
+                count = len(input_jobs)
+            else:
+                input_path, count = self._workflow.export_current(
+                    provider, output_dir=output_directory
+                )
+            if count == 0:
                 from .errors import PromptInputError
 
                 raise PromptInputError("分析対象の求人がありません")
@@ -386,7 +433,8 @@ class RecruitJobApplication:
 
             raise PromptOutputError("求人JSON出力先を解決できません")
         return generate_analysis_files(
-            input_path=Path(input_path),
+            input_path=Path(input_path) if input_path is not None else None,
+            input_jobs=input_jobs,
             json_output_path=Path(json_path),
             guide_output_path=Path(guide_path) if guide_path is not None else None,
             include_guide=include_guide,
@@ -529,3 +577,8 @@ __all__ = [
     "RecruitJobApplication",
     "RestoreResult",
 ]
+
+
+def sort_html_paths(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    """Shared deterministic ordering for the picker and batch import."""
+    return tuple(sorted(paths, key=lambda path: (path.name.casefold(), str(path).casefold(), str(path))))

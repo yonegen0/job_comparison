@@ -591,6 +591,8 @@ def test_planless_and_prepared_metric_rendering(tk_window) -> None:
             job_info=SimpleNamespace(stale_jobs=[object()]),
             job_info_json=Path("C:/output/求人情報.json"),
             report_json=Path("C:/output/処理レポート.json"),
+            comparison_guide_path=Path("C:/output/求人PDFから比較資料に.md"),
+            candidate_applied=False,
         )
 
         view._render_pdf_plan(plan)

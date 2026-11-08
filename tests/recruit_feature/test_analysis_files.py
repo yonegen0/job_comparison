@@ -86,9 +86,9 @@ class AnalysisV4RendererTests(unittest.TestCase):
                 jobs=[prompt_job(index) for index in range(101)],
             )
 
-    def test_v8_guide_is_optional_general_comparison_contract(self) -> None:
+    def test_v10_guide_is_optional_general_comparison_contract(self) -> None:
         guide = render_analysis_guide()
-        self.assertIn("prompt_template_version: job-comparison-v8", guide)
+        self.assertIn("prompt_template_version: job-comparison-v10", guide)
         self.assertIn("添付されていなくても", guide)
         self.assertIn("複数の求人JSON", guide)
         self.assertIn("provider + job_id", guide)
@@ -97,7 +97,7 @@ class AnalysisV4RendererTests(unittest.TestCase):
         self.assertNotIn("job_data_sha256", guide)
         self.assertNotIn("必須条件ゲート", guide)
 
-    def test_v9_guide_renders_candidate_as_safe_markdown_once(self) -> None:
+    def test_v11_guide_renders_candidate_as_safe_markdown_once(self) -> None:
         guide = render_candidate_analysis_guide(
             candidate_profile=CandidateProfile(
                 age="34歳",
@@ -108,7 +108,7 @@ class AnalysisV4RendererTests(unittest.TestCase):
             )
         )
         self.assertTrue(guide.startswith(
-            "---\nprompt_template_version: job-comparison-v9\n---\n\n"
+            "---\nprompt_template_version: job-comparison-v11\n---\n\n"
             "# 求人JSON 転職者条件付き比較ガイド\n"
         ))
         self.assertEqual(guide.splitlines().count("## 転職者条件"), 1)
@@ -128,7 +128,7 @@ class AnalysisV4RendererTests(unittest.TestCase):
 
 
 class AnalysisGenerationTests(unittest.TestCase):
-    def test_candidate_mode_publishes_v4_json_and_v9_guide_together(self) -> None:
+    def test_candidate_mode_publishes_v4_json_and_v11_guide_together(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             csv_path = CsvExporter(directory).export(

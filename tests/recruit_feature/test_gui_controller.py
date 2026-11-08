@@ -95,7 +95,8 @@ class FakeView:
 
 class FakePicker:
     def __init__(self, path): self.path = path
-    def choose_html(self, *, initial_directory): return self.path
+    def choose_html(self, *, initial_directory):
+        return (self.path,) if isinstance(self.path, Path) else (self.path or ())
 
 
 class FakeApplication:
@@ -109,17 +110,19 @@ class FakeApplication:
     def get_provider_status(self, *, provider): return self.statuses[provider]
     def ensure_output_directory(self, *, provider):
         return Path(f"C:/safe/{provider.value.lower()}/output")
-    def import_saved_html(self, *, provider, input_path, mode):
+    def import_saved_html_batch(self, *, provider, input_paths, mode):
+        input_path = input_paths[0]
         self.calls.append((provider, input_path, mode))
         if self.import_error is not None:
             raise self.import_error
         if self.import_results:
             return self.import_results.pop(0)
         return ImportResult(provider, mode, 2, 2, Path("jobs.csv"), True, ())
-    def create_analysis_files(self, *, provider, candidate_profile=None):
+    def create_analysis_files(self, *, provider, candidate_profile=None, include_guide=True):
         self.calls.append((provider, "analysis", candidate_profile))
         return AnalysisGenerationResult(
-            provider, 1, 1, Path("safe_jobs.json"), Path("safe_guide.md"), 10, 10, ()
+            provider, 1, 1, Path("safe_jobs.json"), Path("safe_guide.md") if include_guide else None,
+            10, 10 if include_guide else None, ()
         )
 
 
@@ -155,7 +158,7 @@ class ControllerTests(unittest.TestCase):
         controller.choose_html()
         controller.change_mode(ImportMode.MERGE)
         controller.select_tab(JobSource.CAREERBANK)
-        self.assertIsNone(controller.model.providers[JobSource.CAREERBANK].selected_path)
+        self.assertEqual(controller.model.providers[JobSource.CAREERBANK].selected_paths, ())
         self.assertEqual(controller.model.providers[JobSource.JOBINS].mode, ImportMode.MERGE)
 
     def test_import_clears_selection_and_keeps_merge_mode(self) -> None:
@@ -165,7 +168,7 @@ class ControllerTests(unittest.TestCase):
         controller.change_mode(ImportMode.MERGE)
         controller.import_selected()
         state = controller.model.providers[JobSource.JOBINS]
-        self.assertIsNone(state.selected_path)
+        self.assertEqual(state.selected_paths, ())
         self.assertEqual(state.mode, ImportMode.MERGE)
         self.assertEqual(
             self.app.calls,
@@ -193,7 +196,7 @@ class ControllerTests(unittest.TestCase):
         controller.import_selected()
 
         state = controller.model.providers[JobSource.JOBINS]
-        self.assertIsNone(state.selected_path)
+        self.assertEqual(state.selected_paths, ())
         self.assertIs(state.mode, ImportMode.MERGE)
         self.assertEqual(self.view.dialogs[-1].title, "取り込み結果")
 
@@ -205,7 +208,7 @@ class ControllerTests(unittest.TestCase):
         controller.import_selected()
 
         state = controller.model.providers[JobSource.JOBINS]
-        self.assertIsNone(state.selected_path)
+        self.assertEqual(state.selected_paths, ())
         self.assertIs(state.mode, ImportMode.REPLACE)
         self.assertEqual(len(self.view.replace_prompts), 1)
         self.assertEqual(self.app.calls[-1][2], ImportMode.REPLACE)
@@ -232,8 +235,8 @@ class ControllerTests(unittest.TestCase):
             controller.model.providers[JobSource.JOBINS].mode,
             ImportMode.MERGE,
         )
-        self.assertIsNone(
-            controller.model.providers[JobSource.JOBINS].selected_path
+        self.assertEqual(
+            controller.model.providers[JobSource.JOBINS].selected_paths, ()
         )
         self.assertEqual(self.view.replace_prompts, [])
 
@@ -256,8 +259,8 @@ class ControllerTests(unittest.TestCase):
             controller.model.providers[JobSource.CAREERBANK].mode,
             ImportMode.REPLACE,
         )
-        self.assertIsNotNone(
-            controller.model.providers[JobSource.CAREERBANK].selected_path
+        self.assertTrue(
+            controller.model.providers[JobSource.CAREERBANK].selected_paths
         )
 
     def test_import_failure_keeps_selected_path_and_merge_mode(self) -> None:
@@ -270,7 +273,7 @@ class ControllerTests(unittest.TestCase):
         controller.import_selected()
 
         state = controller.model.providers[JobSource.JOBINS]
-        self.assertEqual(state.selected_path, Path("C:/input/jobs.html"))
+        self.assertEqual(state.selected_paths, (Path("C:/input/jobs.html"),))
         self.assertIs(state.mode, ImportMode.MERGE)
         self.assertFalse(controller.model.busy)
         self.assertNotIn("C:/input/jobs.html", controller.model.status_text)
@@ -319,7 +322,7 @@ class ControllerTests(unittest.TestCase):
                 controller.import_selected()
 
                 state = controller.model.providers[JobSource.JOBINS]
-                self.assertIsNone(state.selected_path)
+                self.assertEqual(state.selected_paths, ())
                 self.assertIs(state.mode, expected_mode)
 
     def test_new_controller_starts_each_provider_in_replace_mode(self) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -95,11 +96,21 @@ def apply_transaction(
     import_main_csv: Path | None = None,
     expected_existing: Mapping[Path, bool] | None = None,
     verify_outputs: Callable[[], None] | None = None,
+    comparison_guide_path: Path | None = None,
+    comparison_guide_content: str | None = None,
 ) -> JobInfoDocument:
+    if (comparison_guide_path is None) != (comparison_guide_content is None):
+        raise ApplyError("比較指示書の出力先と本文を両方指定してください。")
+    targets = (job_info_json, report_json)
+    if comparison_guide_path is not None:
+        if comparison_guide_path.resolve() in {p.resolve() for p in targets}:
+            raise ApplyError("比較指示書とJSONには異なる出力先を指定してください。")
+        targets += (comparison_guide_path,)
     document = job_info or prepare_job_info_document(results, job_info_json, import_main_csv)
     _preflight(results, job_info_json, report_json)
     staged_job_info: Path | None = None
     staged_report: Path | None = None
+    staged_guide: Path | None = None
     output_backups: dict[Path, Path] = {}
     published_targets: set[Path] = set()
     rename_state: list[tuple[DocumentResult, Path, Path, Path]] = []
@@ -113,6 +124,8 @@ def apply_transaction(
         staged_report = stage_processing_report_json(
             results, report_json, document.stale_jobs
         )
+        if comparison_guide_path is not None:
+            staged_guide = stage_comparison_guide(comparison_guide_path, comparison_guide_content)
 
         for result in results:
             if not result.is_rename_eligible:
@@ -136,14 +149,14 @@ def apply_transaction(
 
         if verify_outputs is not None:
             verify_outputs()
-        for target in (job_info_json, report_json):
+        for target in targets:
             resolved_target = target.resolve()
             if resolved_target in expected and target.exists() != expected[resolved_target]:
                 raise InputChangedError(
-                    f"確認後にJSON出力先が変更されました: {target.name}"
+                    f"確認後に出力先が変更されました: {target.name}"
                 )
 
-        for target in (job_info_json, report_json):
+        for target in targets:
             if target.exists():
                 backup = target.with_name(f".{target.name}.{uuid.uuid4().hex}.bak")
                 target.replace(backup)
@@ -155,9 +168,15 @@ def apply_transaction(
         staged_report.rename(report_json)
         published_targets.add(report_json)
         staged_report = None
+        if staged_guide is not None:
+            staged_guide.rename(comparison_guide_path)
+            published_targets.add(comparison_guide_path)
+            staged_guide = None
 
         load_job_info_json(job_info_json)
         load_processing_report_json(report_json)
+        if comparison_guide_path is not None:
+            verify_comparison_guide(comparison_guide_path, comparison_guide_content)
         for backup in output_backups.values():
             try:
                 backup.unlink(missing_ok=True)
@@ -179,7 +198,7 @@ def apply_transaction(
             except OSError as rollback_exc:
                 rollback_errors.append(f"{source.name}: {rollback_exc}")
 
-        for target in reversed((job_info_json, report_json)):
+        for target in reversed(targets):
             backup = output_backups.get(target)
             try:
                 if target in published_targets:
@@ -203,3 +222,26 @@ def apply_transaction(
             staged_job_info.unlink(missing_ok=True)
         if staged_report:
             staged_report.unlink(missing_ok=True)
+        if staged_guide:
+            staged_guide.unlink(missing_ok=True)
+
+
+def verify_comparison_guide(path: Path, content: str) -> None:
+    if path.read_bytes() != content.encode("utf-8") or "\x00" in content:
+        raise ApplyError("比較指示書の読み戻し検証に失敗しました。")
+
+
+def stage_comparison_guide(target: Path, content: str) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".comparison-guide-", suffix=".tmp", dir=target.parent)
+    staged = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        verify_comparison_guide(staged, content)
+        return staged
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise

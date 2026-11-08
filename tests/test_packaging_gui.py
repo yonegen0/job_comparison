@@ -74,7 +74,7 @@ def test_project_and_package_versions_match() -> None:
         "pypdf[crypto]==6.16.1", "cryptography==50.0.1", "cffi==2.1.1", "pycparser==3.0"
     ]
     assert project["tool"]["setuptools"]["package-data"]["job_comparison_app"] == [
-        "assets/*.ico"
+        "assets/*.ico", "assets/pdf_comparison_guide.md"
     ]
     assert "recruit_job_tool*" in project["tool"]["setuptools"]["packages"]["find"]["include"]
 

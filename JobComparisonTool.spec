@@ -6,6 +6,7 @@ analysis = Analysis(
     binaries=[],
     datas=[
         ("job_comparison_app/assets/JobComparisonTool.ico", "job_comparison_app/assets"),
+        ("job_comparison_app/assets/pdf_comparison_guide.md", "job_comparison_app/assets"),
         ("job_comparison_report/templates/report.html", "job_comparison_report/templates"),
         ("job_comparison_report/templates/report.css", "job_comparison_report/templates"),
     ],
