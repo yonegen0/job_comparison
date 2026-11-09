@@ -188,7 +188,7 @@ class Controller:
         self.model = ViewModel()
         self._operation_token = 0
         self._pdf_choice: OutputConflictChoice | None = None
-        self._pdf_choice_key: tuple[Path, Path | None, Path, bool] | None = None
+        self._pdf_choice_key: tuple[Path, Path | None, Path, bool, str] | None = None
         self._migration_choice: LegacyCsvMigrationChoice | None = None
         self._migration_source: Path | None = None
         self._migration_key: tuple[Path, Path] | None = None
@@ -269,7 +269,7 @@ class Controller:
                 return
             request = replace(request, candidate_profile=decision.profile)
         aliases = request.aliases_path.resolve(strict=False) if request.aliases_path else None
-        key = (request.input_dir.resolve(strict=False), aliases, paths.output_dir, paths.comparison_guide_path is not None)
+        key = (request.input_dir.resolve(strict=False), aliases, paths.output_dir, paths.comparison_guide_path is not None, request.provider)
         if key != self._pdf_choice_key:
             self._clear_pdf_selections()
             self._pdf_choice_key = key
@@ -288,7 +288,7 @@ class Controller:
         import_csv: Path | None = None
         migration_mode = "移行なし"
         if not paths.job_info_json.exists() and choice is not OutputConflictChoice.SAVE_AS_NEW:
-            migration_key = (request.input_dir.resolve(strict=False), paths.output_dir)
+            migration_key = (request.input_dir.resolve(strict=False), paths.output_dir, request.provider)
             if migration_key != self._migration_key:
                 self._migration_choice = None; self._migration_source = None; self._migration_key = migration_key
             candidates = discover_legacy_main_csv_candidates(request.input_dir, paths.output_dir)

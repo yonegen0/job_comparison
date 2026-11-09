@@ -70,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="求人PDFをローカルでJSON化し、会社名と職種中分類でリネームします。",
     )
     parser.add_argument("--input", required=True, type=Path, help="PDFが直下にある入力フォルダ")
+    parser.add_argument("--provider", choices=("jobins", "circus"), default="jobins", help="求人PDFの媒体（既定: jobins）")
     parser.add_argument("--apply", action="store_true", help="JSON出力とPDFリネームを実行する")
     parser.add_argument("--output-json", type=Path, help="求人情報JSONの出力先")
     parser.add_argument("--report-json", type=Path, help="処理レポートJSONの出力先")
@@ -141,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                 job_info_json=args.output_json,
                 report_json=args.report_json,
                 import_main_csv=args.import_main_csv,
+                provider=args.provider,
             )
         )
         print_preview(plan.results, applied=False, stale_count=len(plan.job_info.stale_jobs))

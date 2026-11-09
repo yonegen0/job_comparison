@@ -47,6 +47,7 @@ class PdfOrganizationRequest:
     import_main_csv: Path | None = None
     comparison_guide_path: Path | None = None
     candidate_profile: CandidateProfile | None = field(default=None, repr=False)
+    provider: str = "jobins"
 
 
 @dataclass(slots=True)
@@ -170,8 +171,10 @@ def prepare_pdf_organization(request: PdfOrganizationRequest) -> PdfOrganization
         guide_content = render_pdf_comparison_guide(
             job_info_filename=job_info_json.name, candidate_profile=request.candidate_profile,
         )
-    results = analyze(input_dir, aliases_path)
-    job_info = prepare_job_info_document(results, job_info_json, import_main_csv)
+    results = analyze(input_dir, aliases_path, **({"provider": request.provider} if request.provider != "jobins" else {}))
+    job_info = prepare_job_info_document(results, job_info_json, import_main_csv, provider=request.provider)
+    for result in results:
+        result.finalize_status()
     normalized = PdfOrganizationRequest(
         input_dir,
         aliases_path,
@@ -180,6 +183,7 @@ def prepare_pdf_organization(request: PdfOrganizationRequest) -> PdfOrganization
         import_main_csv,
         guide_path,
         request.candidate_profile,
+        request.provider,
     )
     fingerprint_paths = [job_info_json, report_json]
     if guide_path is not None:
