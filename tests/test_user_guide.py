@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import binascii
 import importlib.util
+import os
 from pathlib import Path, PurePosixPath
 import re
 import struct
@@ -213,7 +214,8 @@ def test_capture_tool_has_fixed_scenes_and_rejects_other_output_roots() -> None:
     spec.loader.exec_module(module)
     assert list(module.SCENES) == [Path(name).stem for name in EXPECTED_IMAGES]
     assert set(module.SCENE_RUNNERS) == set(module.SCENES)
-    with pytest.raises(RuntimeError, match="only be written"):
+    expected = "only be written" if os.name == "nt" else "supported only on Windows"
+    with pytest.raises(RuntimeError, match=expected):
         module._prepare_environment(ROOT / ".venv-build" / "outside-user-guide-test")
 
 
