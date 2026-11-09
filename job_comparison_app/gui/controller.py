@@ -191,7 +191,7 @@ class Controller:
         self._pdf_choice_key: tuple[Path, Path | None, Path, bool, str] | None = None
         self._migration_choice: LegacyCsvMigrationChoice | None = None
         self._migration_source: Path | None = None
-        self._migration_key: tuple[Path, Path] | None = None
+        self._migration_key: tuple[Path, Path, str] | None = None
         self._pending_pdf_output_mode: str | None = None
         self._pending_migration_mode: str | None = None
         self._export_choice: OutputConflictChoice | None = None
