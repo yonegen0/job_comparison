@@ -8,6 +8,7 @@ from .config import load_aliases
 from .extractor import Extractor
 from .models import DocumentResult, EXTRACTED_FIELDS, FieldValue
 from .naming import assign_proposed_names
+from .providers.circus import CircusExtractor
 from .pdf_reader import (
     EncryptedPdfError,
     PdfToolReadError,
@@ -167,7 +168,12 @@ def analyze(
     read_pdf_func: Callable = read_pdf,
     extractor_factory: Callable[[dict[str, list[str]]], ExtractorLike] = Extractor,
     sha256_func: Callable[[Path], str] = sha256_file,
+    provider: str = "jobins",
 ) -> list[DocumentResult]:
+    if provider not in {"jobins", "circus"}:
+        raise ValueError(f"未対応の媒体です: {provider}")
+    if provider == "circus":
+        extractor_factory = CircusExtractor
     aliases = load_aliases(aliases_path)
     paths = sorted(input_dir.glob("*.pdf"), key=lambda path: path.name.casefold())
     if not paths:
@@ -177,14 +183,15 @@ def analyze(
         try:
             document = read_pdf_func(path)
             result = extractor_factory(_copy_aliases(aliases)).extract(document)
-            result = retry_initially_missing_fields(
+            if provider == "jobins":
+                result = retry_initially_missing_fields(
                 path,
                 result,
                 aliases,
                 read_pdf_func=read_pdf_func,
                 extractor_factory=extractor_factory,
                 sha256_func=sha256_func,
-            )
+                )
         except ScannedPdfError as exc:
             result = _error_result(path, str(exc), "scanned", fatal=True, sha256_func=sha256_func)
         except EncryptedPdfError as exc:
@@ -199,6 +206,8 @@ def analyze(
                 fatal=True,
                 sha256_func=sha256_func,
             )
+        if provider == "circus":
+            result.provider = "circus"
         results.append(result)
     assign_proposed_names(results, input_dir)
     for result in results:

@@ -119,6 +119,8 @@ class DocumentResult:
     position_resolution: str = ""
     position_qualifiers: list[str] = field(default_factory=list)
     job_id: str = ""
+    provider: str = "jobins"
+    extra_fields: dict[str, str] = field(default_factory=dict)
     fields: dict[str, FieldValue] = field(
         default_factory=lambda: {name: FieldValue() for name in EXTRACTED_FIELDS}
     )

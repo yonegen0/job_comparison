@@ -153,6 +153,7 @@ class TkView:
         self.root.bind("<F5>", lambda event: self._shortcut_preview())
 
     def _build_variables(self) -> None:
+        self.pdf_provider = tk.StringVar(value="JoBins")
         self.pdf_input = tk.StringVar()
         self.pdf_aliases = tk.StringVar()
         self.pdf_output_dir = tk.StringVar()
@@ -366,6 +367,10 @@ class TkView:
         fields.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
         fields.columnconfigure(0, weight=1, uniform="pdf_fields")
         fields.columnconfigure(1, weight=1, uniform="pdf_fields")
+        ttk.Label(form, text="PDF形式", style=STYLE_CARD_CAPTION).grid(row=1, column=0, sticky="w")
+        provider_selector = ttk.Combobox(form, textvariable=self.pdf_provider, values=("JoBins", "circus"), state="readonly", width=12)
+        provider_selector.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        self._input_widgets.append(provider_selector)
         self._path_field(fields, 0, 0, "PDFフォルダ（必須）", self.pdf_input, self._choose_pdf_folder)
         self._path_field(fields, 0, 1, "見出し別名JSON", self.pdf_aliases, self._choose_pdf_aliases)
         self._path_field(
@@ -444,9 +449,9 @@ class TkView:
         self.pdf_tree, self.pdf_empty = self._build_tree(
             result,
             row=4,
-            columns=("status", "old", "new", "company", "position", "json", "message"),
-            headings=("状態", "元ファイル名", "変更後ファイル名", "会社名", "募集ポジション", "JSON", "警告・除外理由"),
-            widths=(80, 180, 190, 140, 170, 55, 260),
+            columns=("status", "old", "new", "company", "position", "jobid", "json", "message"),
+            headings=("状態", "元ファイル名", "変更後ファイル名", "会社名", "募集ポジション", "求人ID", "JSON", "警告・除外理由"),
+            widths=(80, 180, 190, 140, 170, 80, 55, 260),
             empty_text="PDFフォルダーを選択し、「事前確認」を実行すると対象一覧が表示されます。",
         )
 
@@ -756,7 +761,7 @@ class TkView:
         return tree, empty
 
     def _bind_variable_changes(self) -> None:
-        for variable in (self.pdf_input, self.pdf_aliases, self.pdf_output_dir, self.pdf_output_mode):
+        for variable in (self.pdf_input, self.pdf_aliases, self.pdf_output_dir, self.pdf_output_mode, self.pdf_provider):
             variable.trace_add("write", lambda *args: self._changed_pdf())
         self.export_input.trace_add("write", lambda *args: self._changed_export())
         for variable in (self.report_input, self.report_manifest, self.report_date, self.report_keep_html):
@@ -1106,6 +1111,7 @@ class TkView:
             job_info_json=paths.job_info_json,
             report_json=paths.report_json,
             comparison_guide_path=paths.comparison_guide_path,
+            provider=self.pdf_provider.get().lower(),
         )
 
     def ask_organization_output_conflict(self, conflict: OrganizationOutputConflict) -> OutputConflictChoice:
@@ -1354,6 +1360,7 @@ class TkView:
                     result.proposed_name or "—",
                     result.company.value,
                     result.resolved_position or result.raw_position.value,
+                    result.job_id or "—",
                     "対象" if result.is_job_info_eligible else "除外",
                     " / ".join(messages[:3]),
                 ),

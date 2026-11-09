@@ -29,3 +29,14 @@ usage: job_pdf_tool.py --input PATH [--apply]
 `求人情報.json`は`format: job-comparison/job-info`、`format_version: 1`、`field_order`、`jobs`を持ちます。標準値は文字列で、絶対パスや実行日時は記録しません。`処理レポート.json`は`format: job-comparison/processing-report`と`reports`を持ち、ページだけが正の整数またはnullです。両方ともUTF-8（BOMなし）、2スペースindent、LF、末尾LFで決定的に保存します。
 
 重複JSONキー、NaN、Infinity、schema不一致、標準項目欠落、field_order外のjobキーは`INPUT001`です。本実行では入力・出力をfingerprintで再検証し、PDF改名と2 JSONを同一トランザクションで確定します。途中失敗時は既存JSONとPDF名を復元します。
+
+## circus求人PDF
+
+GUI「求人PDF整理」の「PDF形式」で `circus` を選択します（既定は `jobins`）。CLI は `--provider circus` を追加します。媒体省略は従来のJoBins解析です。
+
+```powershell
+py job_pdf_tool.py --input "C:\求人PDF\circus" --provider circus
+py job_pdf_tool.py --input "C:\求人PDF\circus" --provider circus --apply
+```
+
+circusの改名規則は `会社名（募集ポジション）-No求人ID.pdf` です。ID未取得時はSHA-256識別子を使います。標準20項目は変更せず、媒体・求人ID・求人タイトル・職種カテゴリ・採用区分など11項目をJSON末尾に追加します。異なる媒体や抽出不能PDFは更新せず、既存求人を保護します。同一IDに異なる内容がある場合は自動更新を保留します。繰返し実行で正規名が変わらないようにします。

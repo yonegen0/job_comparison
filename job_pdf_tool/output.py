@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .models import DocumentResult, JOB_INFO_FIELDS, PROCESS_REPORT_FIELDS, ReportItem
+from .models import DocumentResult, JOB_INFO_FIELDS, PROCESS_REPORT_FIELDS, ReportItem, MISSING_VALUE
+from .providers.circus import CIRCUS_FIELDS
 
 
 JOB_INFO_FORMAT = "job-comparison/job-info"
@@ -212,11 +213,13 @@ def prepare_job_info_document(
     results: list[DocumentResult],
     target: Path,
     import_main_csv: Path | None = None,
+    provider: str = "jobins",
 ) -> JobInfoDocument:
     existing_fields, existing_jobs = _existing_job_info(target, import_main_csv)
-    extra_fields = [name for name in existing_fields if name not in JOB_INFO_FIELDS]
-    field_order = [*JOB_INFO_FIELDS, *extra_fields]
-
+    extras = [name for name in existing_fields if name not in JOB_INFO_FIELDS]
+    if provider == "circus":
+        extras.extend(name for name in CIRCUS_FIELDS if name not in extras)
+    field_order = [*JOB_INFO_FIELDS, *extras]
     current_by_name: dict[str, int] = {}
     for index, result in enumerate(results):
         key = _filename_key(result.source_path.name)
@@ -224,42 +227,103 @@ def prepare_job_info_document(
             raise ValueError(f"大文字小文字を無視すると同名になるPDFがあります: {result.source_path.name}")
         current_by_name[key] = index
 
-    matched_existing: dict[int, dict[str, str]] = {}
-    stale_jobs: list[dict[str, str]] = []
-    for existing in existing_jobs:
-        matches = {
-            current_by_name[key]
-            for key in (
-                _filename_key(existing.get("元ファイル名", "")),
-                _filename_key(existing.get("新ファイル名", "")),
+    matches_by_existing: dict[int, int] = {}
+    matches_by_result: dict[int, int] = {}
+    protected: set[int] = set()
+    for existing_index, previous in enumerate(existing_jobs):
+        previous_provider = previous.get("媒体", "").strip()
+        previous_id = previous.get("求人ID", "").strip()
+        if previous_id == MISSING_VALUE:
+            previous_id = ""
+        candidates: set[int] = set()
+        for key in (
+            _filename_key(previous.get("元ファイル名", "")),
+            _filename_key(previous.get("新ファイル名", "")),
+        ):
+            if key and key in current_by_name:
+                candidates.add(current_by_name[key])
+        if provider == "circus" and previous_provider == "circus" and previous_id:
+            candidates.update(
+                i for i, result in enumerate(results)
+                if result.provider == "circus" and result.job_id == previous_id
             )
-            if key and key in current_by_name
-        }
-        if len(matches) > 1:
-            raise ValueError(
-                "既存求人情報の元ファイル名と新ファイル名が別々のPDFを指しています: "
-                f"{existing.get('元ファイル名', '')} / {existing.get('新ファイル名', '')}"
-            )
-        if matches:
-            index = next(iter(matches))
-            if index in matched_existing:
-                raise ValueError(f"既存求人情報の複数jobが同じPDFを指しています: {results[index].source_path.name}")
-            matched_existing[index] = existing
+        if provider == "circus" and previous_provider not in {"", "circus"}:
+            candidates.clear()
+        if provider == "jobins" and previous_provider == "circus":
+            candidates.clear()
+        if len(candidates) != 1:
+            if candidates:
+                protected.add(existing_index)
+                for i in candidates:
+                    results[i].error = "既存JSONとの照合が一意ではないため更新・登録を保留しました。"
+                    results[i].add_report("求人照合", "warning", results[i].error)
             continue
-        stale = {name: existing.get(name, "") for name in field_order}
-        stale["処理状態"] = "PDF未検出"
-        stale_jobs.append(stale)
+        i = next(iter(candidates))
+        current = results[i]
+        if provider == "circus":
+            if current.provider != "circus":
+                continue
+            if previous_provider == "":
+                # Legacy data is only safe to associate by an exact file name plus company.
+                previous_names = {
+                    _filename_key(previous.get("元ファイル名", "")),
+                    _filename_key(previous.get("新ファイル名", "")),
+                }
+                if (_filename_key(current.source_path.name) not in previous_names
+                        or previous.get("会社名") != current.company.value):
+                    protected.add(existing_index)
+                    current.error = "媒体不明の既存求人と照合できないため、更新・登録を保留しました。"
+                    current.add_report("求人照合", "warning", current.error)
+                    continue
+            if (previous.get("会社名") and current.company.value != previous["会社名"]
+                    and current.is_job_info_eligible):
+                protected.add(existing_index)
+                current.error = "同一求人IDで企業名が異なるため、更新・登録を保留しました。"
+                current.add_report("会社名", "warning", current.error)
+                continue
+        if i in matches_by_result:
+            protected.add(existing_index)
+            protected.add(matches_by_result[i])
+            current.error = "複数の既存求人が同じPDFを指すため更新・登録を保留しました。"
+            current.add_report("求人照合", "warning", current.error)
+            continue
+        matches_by_existing[existing_index] = i
+        matches_by_result[i] = existing_index
 
     jobs: list[dict[str, str]] = []
-    for index, result in enumerate(results):
+    stale_jobs: list[dict[str, str]] = []
+    for i, result in enumerate(results):
         if not result.is_job_info_eligible:
             continue
+        previous = existing_jobs[matches_by_result[i]] if i in matches_by_result else {}
         record = result.job_info_record()
-        previous = matched_existing.get(index, {})
-        for name in extra_fields:
-            record[name] = previous.get(name, "")
+        for field in extras:
+            incoming = result.extra_fields.get(field, "")
+            old = previous.get(field, "")
+            if provider == "circus" and result.provider == "circus" and incoming not in {"", MISSING_VALUE}:
+                record[field] = incoming
+            else:
+                record[field] = old or (incoming if incoming else "")
         jobs.append({name: record.get(name, "") for name in field_order})
-    jobs.extend(stale_jobs)
+
+    for index, previous in enumerate(existing_jobs):
+        matched_result = results[matches_by_existing[index]] if index in matches_by_existing else None
+        if matched_result is not None and matched_result.is_job_info_eligible:
+            continue
+        preserved = {field: previous.get(field, "") for field in field_order}
+        should_mark_missing = (
+            matched_result is None
+            and index not in protected
+            and (provider == "jobins" and previous.get("媒体", "") != "circus"
+                 or provider == "circus" and previous.get("媒体", "") == "circus")
+        )
+        if should_mark_missing:
+            preserved["処理状態"] = "PDF未検出"
+            stale_jobs.append(preserved)
+        elif matched_result is not None:
+            matched_result.add_report("求人照合", "warning", "解析失敗等のため既存JSONレコードを変更せず保持しました。")
+        jobs.append(preserved)
+
     return JobInfoDocument(field_order=field_order, jobs=jobs, stale_jobs=stale_jobs)
 
 
