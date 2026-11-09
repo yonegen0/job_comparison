@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import binascii
 import importlib.util
+import os
 from pathlib import Path, PurePosixPath
 import re
 import struct
@@ -113,9 +114,9 @@ def test_user_guide_encoding_structure_and_required_contracts() -> None:
         "順位1～10",
         "A4縦12ページ",
         "GUIでは作成・更新できません",
-        "求人JSONが必須で、v8ガイドは任意",
+        "求人JSONが必須で、v10ガイドは任意",
         "求人JSONは必須です",
-        "条件入りv9ガイドも必須です",
+        "条件入りv11ガイドも必須です",
     ):
         assert required in text
 
@@ -213,7 +214,8 @@ def test_capture_tool_has_fixed_scenes_and_rejects_other_output_roots() -> None:
     spec.loader.exec_module(module)
     assert list(module.SCENES) == [Path(name).stem for name in EXPECTED_IMAGES]
     assert set(module.SCENE_RUNNERS) == set(module.SCENES)
-    with pytest.raises(RuntimeError, match="only be written"):
+    expected = "only be written" if os.name == "nt" else "supported only on Windows"
+    with pytest.raises(RuntimeError, match=expected):
         module._prepare_environment(ROOT / ".venv-build" / "outside-user-guide-test")
 
 
