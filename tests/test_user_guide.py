@@ -113,9 +113,9 @@ def test_user_guide_encoding_structure_and_required_contracts() -> None:
         "順位1～10",
         "A4縦12ページ",
         "GUIでは作成・更新できません",
-        "求人JSONが必須で、v8ガイドは任意",
+        "求人JSONが必須で、v10ガイドは任意",
         "求人JSONは必須です",
-        "条件入りv9ガイドも必須です",
+        "条件入りv11ガイドも必須です",
     ):
         assert required in text
 
