@@ -5,6 +5,8 @@ on:
       - 'job_pdf_tool/**'
       - 'job_comparison_app/gui/**'
       - 'tests/test_circus_pdf.py'
+      - 'tests/test_user_guide.py'
+      - 'docs/user-guide/**'
       - '.github/workflows/pdf-organizer-tests.yml'
   push:
     branches: [main]
@@ -12,6 +14,8 @@ on:
       - 'job_pdf_tool/**'
       - 'job_comparison_app/gui/**'
       - 'tests/test_circus_pdf.py'
+      - 'tests/test_user_guide.py'
+      - 'docs/user-guide/**'
 jobs:
   pytest:
     runs-on: ubuntu-latest
@@ -21,4 +25,4 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m pip install -r requirements-dev.txt -r requirements.txt
-      - run: python -m pytest -q tests/test_circus_pdf.py tests/test_extractor.py tests/test_naming.py tests/test_json_output.py tests/test_output_transaction.py tests/test_services_gui.py
+      - run: python -m pytest -q tests/test_circus_pdf.py tests/test_extractor.py tests/test_naming.py tests/test_json_output.py tests/test_output_transaction.py tests/test_services_gui.py tests/test_user_guide.py
