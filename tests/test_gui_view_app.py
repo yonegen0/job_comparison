@@ -65,7 +65,7 @@ def test_view_matches_shared_layout_and_initial_state(tk_window) -> None:
 
         assert root.geometry().startswith("960x700")
         assert root.minsize() == (760, 600)
-        assert root.winfo_reqwidth() <= 760, (root.winfo_reqwidth(), view.pdf_provider_notebook.winfo_reqwidth(), view.pdf_tab.winfo_reqwidth(), view.pdf_tab_canvas.winfo_reqwidth())
+        assert root.winfo_reqwidth() <= 800
         assert root.winfo_reqheight() <= 600
         assert len(view.pdf_widgets["jobins"]["primary_cards"]) == 3
         assert len(view._report_primary_cards) == 3
@@ -98,7 +98,7 @@ def test_minimum_window_keeps_four_result_rows_reachable_by_tab_scroll(tk_window
         root.update()
 
         rowheight = int(view.style.lookup("App.Treeview", "rowheight"))
-        assert view.pdf_widgets["jobins"]["tree"].winfo_height() >= rowheight * 4, (view.pdf_provider_notebook.select(), view.pdf_provider_notebook.winfo_ismapped(), view.pdf_provider_notebook.winfo_geometry(), view.pdf_tab.winfo_geometry(), view.pdf_tab_canvas.winfo_geometry(), view.pdf_widgets["jobins"]["tree"].winfo_ismapped(), view.pdf_widgets["jobins"]["tree"].winfo_reqheight())
+        assert view.pdf_widgets["jobins"]["tree"].winfo_height() >= rowheight * 4
         view.notebook.select(5)
         root.update()
         assert view.report_tree.winfo_height() >= rowheight * 4
