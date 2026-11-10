@@ -237,16 +237,16 @@ def test_pdf_json_only_renames_and_restores_without_touching_existing_guide(tmp_
 def test_pdf_output_mode_updates_request_invalidates_preview_and_disables_while_busy(tk_window, tmp_path, monkeypatch):
     view = TkView(tk_window)
     monkeypatch.setattr(view, "post", lambda callback: callback())
-    view.pdf_input.set(str(tmp_path))
+    view.pdf_inputs["jobins"]["input_dir"].set(str(tmp_path))
     app = pdf_support.RecordingApplication()
     control = PdfController(view=view, application=app, output_opener=pdf_support.FakeOpener(), task_runner=pdf_support.ImmediateRunner())
     view.bind_controller(control)
     control.preview_pdf()
     assert control.model.pdf_plan.comparison_guide_path is not None
-    view.pdf_output_mode.set(AnalysisOutputMode.JSON_ONLY.value)
+    view.pdf_inputs["jobins"]["output_mode"].set(AnalysisOutputMode.JSON_ONLY.value)
     assert control.model.pdf_plan is None and control._pdf_choice_key is None
     assert view.current_pdf_request().comparison_guide_path is None
-    assert "比較指示Markdown" not in view.pdf_output_hint.get()
+    assert "比較指示Markdown" not in view.pdf_widgets["jobins"]["output_hint"].get()
     control.preview_pdf()
     assert control.model.pdf_plan.comparison_guide_path is None
     view.render(replace(control.model, busy=True))
@@ -289,3 +289,26 @@ def test_generated_guides_explain_pending_questions_and_link_contract():
         assert "求人リンク一覧" not in pdf
         assert "可能性が高い求人は、原則として順位を下げ" not in pdf
 
+
+
+def test_pdf_json_mode_is_kept_separately_for_jobins_and_circus(tk_window, tmp_path):
+    view = TkView(tk_window)
+    tk_window.deiconify()
+    tk_window.update()
+    assert all(
+        view.pdf_inputs[provider]["output_mode"].get() == AnalysisOutputMode.JSON_WITH_GUIDE.value
+        for provider in ("jobins", "circus")
+    )
+    view.pdf_inputs["jobins"]["input_dir"].set(str(tmp_path))
+    view.pdf_inputs["jobins"]["output_mode"].set(AnalysisOutputMode.JSON_ONLY.value)
+    assert view.current_pdf_request().comparison_guide_path is None
+    view.pdf_provider_notebook.select(1)
+    tk_window.update()
+    assert view.current_pdf_request().provider == "circus"
+    assert view.current_pdf_request().comparison_guide_path is not None
+    view.pdf_inputs["circus"]["output_mode"].set(AnalysisOutputMode.JSON_ONLY.value)
+    assert view.current_pdf_request().comparison_guide_path is None
+    view.pdf_provider_notebook.select(0)
+    tk_window.update()
+    assert view.pdf_inputs["jobins"]["output_mode"].get() == AnalysisOutputMode.JSON_ONLY.value
+    assert view.current_pdf_request().comparison_guide_path is None

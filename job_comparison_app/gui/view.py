@@ -67,6 +67,7 @@ TAB_PDF = 2
 TAB_EXPORT = 3
 TAB_COPY = 4
 TAB_REPORT = 5
+PDF_PROVIDERS = ("jobins", "circus")
 
 
 class WindowsOutputOpener:
@@ -110,10 +111,11 @@ class TkView:
         self._busy = False
         self._last_model: ViewModel | None = None
         self._input_widgets: list[tk.Widget] = []
-        self._pdf_primary_cards = []
+        self.pdf_widgets: dict[str, dict] = {provider: {} for provider in PDF_PROVIDERS}
+        self._selected_pdf_provider = "jobins"
+        self._changing_pdf_programmatically = False
         self._report_primary_cards = []
         self._export_primary_cards = []
-        self._pdf_secondary_labels: dict[str, ttk.Label] = {}
         self._report_secondary_labels: dict[str, ttk.Label] = {}
         self._export_secondary_labels: dict[str, ttk.Label] = {}
         self._tab_canvases: list[tk.Canvas] = []
@@ -153,13 +155,24 @@ class TkView:
         self.root.bind("<F5>", lambda event: self._shortcut_preview())
 
     def _build_variables(self) -> None:
-        self.pdf_provider = tk.StringVar(value="JoBins")
-        self.pdf_input = tk.StringVar()
-        self.pdf_aliases = tk.StringVar()
-        self.pdf_output_dir = tk.StringVar()
-        self.pdf_output_mode = tk.StringVar(value=AnalysisOutputMode.JSON_WITH_GUIDE.value)
-        self.pdf_output_hint = tk.StringVar()
-        self.pdf_output_summary = tk.StringVar(value="保存先は事前確認後に表示します。")
+        self.pdf_inputs = {
+            provider: {
+                "input_dir": tk.StringVar(),
+                "aliases": tk.StringVar(),
+                "output_dir": tk.StringVar(),
+                "output_mode": tk.StringVar(value=AnalysisOutputMode.JSON_WITH_GUIDE.value),
+            }
+            for provider in PDF_PROVIDERS
+        }
+        for provider in PDF_PROVIDERS:
+            self.pdf_widgets[provider]["output_hint"] = tk.StringVar()
+            self.pdf_widgets[provider]["output_summary"] = tk.StringVar(
+                value="保存先は事前確認後に表示します。"
+            )
+            self.pdf_widgets[provider]["stat_vars"] = {
+                name: tk.StringVar(value="未確認" if name in self.PDF_PRIMARY else "—")
+                for name in self.PDF_STATS
+            }
         self.export_input = tk.StringVar()
         self.export_output = tk.StringVar(value="PDFフォルダーを選択すると表示します。")
         self.report_input = tk.StringVar()
@@ -171,10 +184,6 @@ class TkView:
         self.report_keep_html = tk.BooleanVar(value=False)
         self.report_show_details = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="入力を選択してください。")
-        self._pdf_stat_vars = {
-            name: tk.StringVar(value="未確認" if name in self.PDF_PRIMARY else "—")
-            for name in self.PDF_STATS
-        }
         self._report_stat_vars = {
             name: tk.StringVar(value="未確認" if name in self.REPORT_PRIMARY else "—")
             for name in self.REPORT_STATS
@@ -221,6 +230,7 @@ class TkView:
         self.candidate_tab_canvas = self._tab_canvases[TAB_CANDIDATE]
         self.recruit_tab_shell, self.recruit_tab = self._scrollable_tab()
         self.pdf_tab_shell, self.pdf_tab = self._scrollable_tab()
+        self.pdf_tab_canvas = self._tab_canvases[TAB_PDF]
         self.export_tab_shell, self.export_tab = self._scrollable_tab()
         self.copy_tab_shell, self.copy_tab = self._scrollable_tab()
         self.report_tab_shell, self.report_tab = self._scrollable_tab()
@@ -349,12 +359,33 @@ class TkView:
 
     def _build_pdf_tab(self) -> None:
         self.pdf_tab.columnconfigure(0, weight=1)
-        self.pdf_tab.rowconfigure(2, weight=1)
-        self._pdf_primary_cards = self._build_primary_metrics(
-            self.pdf_tab, self.PDF_PRIMARY, self._pdf_stat_vars
+        self.pdf_tab.rowconfigure(0, weight=1)
+        self.pdf_provider_notebook = ttk.Notebook(
+            self.pdf_tab, style=STYLE_NOTEBOOK, height=self.visuals.scaled_px(580)
+        )
+        self.pdf_provider_notebook.grid(row=0, column=0, sticky="nsew")
+        self._changing_pdf_programmatically = True
+        try:
+            for provider, label in (("jobins", "JoBins"), ("circus", "circus")):
+                page = ttk.Frame(self.pdf_provider_notebook, padding=4, style=STYLE_ROOT)
+                page.columnconfigure(0, weight=1)
+                page.rowconfigure(2, weight=1)
+                self.pdf_provider_notebook.add(page, text=label)
+                self._build_pdf_provider_page(page, provider)
+            self.pdf_provider_notebook.select(0)
+        finally:
+            self._changing_pdf_programmatically = False
+        self.pdf_provider_notebook.bind("<<NotebookTabChanged>>", self._pdf_tab_changed, add="+")
+
+    def _build_pdf_provider_page(self, page: ttk.Frame, provider: str) -> None:
+        inputs = self.pdf_inputs[provider]
+        widgets = self.pdf_widgets[provider]
+        variables = widgets["stat_vars"]
+        widgets["primary_cards"] = self._build_primary_metrics(
+            page, self.PDF_PRIMARY, variables
         )
 
-        card = self.visuals.create_card(self.pdf_tab, padding=8)
+        card = self.visuals.create_card(page, padding=8)
         card.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         form = card.body
         form.columnconfigure(1, weight=1)
@@ -367,24 +398,22 @@ class TkView:
         fields.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
         fields.columnconfigure(0, weight=1, uniform="pdf_fields")
         fields.columnconfigure(1, weight=1, uniform="pdf_fields")
-        ttk.Label(form, text="PDF形式", style=STYLE_CARD_CAPTION).grid(row=1, column=0, sticky="w")
-        provider_selector = ttk.Combobox(form, textvariable=self.pdf_provider, values=("JoBins", "circus"), state="readonly", width=12)
-        provider_selector.grid(row=1, column=1, sticky="w", padx=(8, 0))
-        self._input_widgets.append(provider_selector)
-        self._path_field(fields, 0, 0, "PDFフォルダ（必須）", self.pdf_input, self._choose_pdf_folder)
-        self._path_field(fields, 0, 1, "見出し別名JSON", self.pdf_aliases, self._choose_pdf_aliases)
         self._path_field(
-            fields,
-            1,
-            0,
-            "出力フォルダー（任意）",
-            self.pdf_output_dir,
-            self._choose_pdf_output_dir,
+            fields, 0, 0, "PDFフォルダ（必須）", inputs["input_dir"],
+            lambda provider=provider: self._choose_pdf_folder(provider),
+        )
+        self._path_field(
+            fields, 0, 1, "見出し別名JSON", inputs["aliases"],
+            lambda provider=provider: self._choose_pdf_aliases(provider),
+        )
+        self._path_field(
+            fields, 1, 0, "出力フォルダー（任意）", inputs["output_dir"],
+            lambda provider=provider: self._choose_pdf_output_dir(provider),
             columnspan=2,
         )
         ttk.Label(
             form,
-            textvariable=self.pdf_output_hint,
+            textvariable=widgets["output_hint"],
             style=STYLE_CARD_CAPTION,
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
         output_modes = ttk.Frame(form, style=STYLE_CARD_BODY)
@@ -393,12 +422,14 @@ class TkView:
             ("JSON＋プロンプトMarkdown", AnalysisOutputMode.JSON_WITH_GUIDE),
             ("JSONのみ", AnalysisOutputMode.JSON_ONLY),
         )):
-            button = ttk.Radiobutton(output_modes, text=label, variable=self.pdf_output_mode, value=mode.value)
+            button = ttk.Radiobutton(
+                output_modes, text=label, variable=inputs["output_mode"], value=mode.value
+            )
             button.grid(row=0, column=index, sticky="w", padx=(0 if index == 0 else 16, 0))
             self._input_widgets.append(button)
-        self._update_pdf_output_hint()
+        self._update_pdf_output_hint(provider)
 
-        result_card = self.visuals.create_card(self.pdf_tab, padding=8)
+        result_card = self.visuals.create_card(page, padding=8)
         result_card.grid(row=2, column=0, sticky="nsew")
         result = result_card.body
         result.columnconfigure(0, weight=1)
@@ -415,38 +446,29 @@ class TkView:
         left.grid(row=0, column=0, sticky="w")
         right = ttk.Frame(actions, style=STYLE_CARD_BODY)
         right.grid(row=0, column=2, sticky="e")
-        self.pdf_preview_button = ttk.Button(
-            left,
-            text="事前確認",
-            style=STYLE_BUTTON,
-            command=lambda: self.controller and self.controller.preview_pdf(),
+        widgets["preview_button"] = ttk.Button(
+            left, text="事前確認", style=STYLE_BUTTON,
+            command=lambda provider=provider: self._invoke_pdf_for(provider, "preview_pdf"),
         )
-        self.pdf_preview_button.grid(row=0, column=0)
-        self.pdf_apply_button = ttk.Button(
-            left,
-            text="本実行",
-            style=STYLE_PRIMARY_BUTTON,
-            command=lambda: self.controller and self.controller.apply_pdf(),
+        widgets["preview_button"].grid(row=0, column=0)
+        widgets["apply_button"] = ttk.Button(
+            left, text="本実行", style=STYLE_PRIMARY_BUTTON,
+            command=lambda provider=provider: self._invoke_pdf_for(provider, "apply_pdf"),
         )
-        self.pdf_apply_button.grid(row=0, column=1, padx=(8, 0))
-        self.pdf_open_button = ttk.Button(
-            right,
-            text="出力フォルダーを開く",
-            style=STYLE_BUTTON,
-            command=lambda: self.controller and self.controller.open_pdf_output_folder(),
+        widgets["apply_button"].grid(row=0, column=1, padx=(8, 0))
+        widgets["open_button"] = ttk.Button(
+            right, text="出力フォルダーを開く", style=STYLE_BUTTON,
+            command=lambda provider=provider: self._invoke_pdf_for(provider, "open_pdf_output_folder"),
         )
-        self.pdf_open_button.grid(row=0, column=0)
-        self._pdf_secondary_labels = self._build_secondary_metrics(
-            result, row=2, names=self.PDF_SECONDARY, variables=self._pdf_stat_vars
+        widgets["open_button"].grid(row=0, column=0)
+        widgets["secondary_labels"] = self._build_secondary_metrics(
+            result, row=2, names=self.PDF_SECONDARY, variables=variables
         )
         ttk.Label(
-            result,
-            textvariable=self.pdf_output_summary,
-            style=STYLE_CARD_CAPTION,
-            justify="left",
-            wraplength=820,
+            result, textvariable=widgets["output_summary"], style=STYLE_CARD_CAPTION,
+            justify="left", wraplength=820,
         ).grid(row=3, column=0, sticky="ew", pady=(0, 5))
-        self.pdf_tree, self.pdf_empty = self._build_tree(
+        widgets["tree"], widgets["empty"] = self._build_tree(
             result,
             row=4,
             columns=("status", "old", "new", "company", "position", "jobid", "json", "message"),
@@ -454,6 +476,10 @@ class TkView:
             widths=(80, 180, 190, 140, 170, 80, 55, 260),
             empty_text="PDFフォルダーを選択し、「事前確認」を実行すると対象一覧が表示されます。",
         )
+
+    def _invoke_pdf_for(self, provider: str, method: str) -> None:
+        if self.controller and not self._busy and self.selected_pdf_provider() == provider:
+            getattr(self.controller, method)()
 
     def _build_export_tab(self) -> None:
         self.export_tab.columnconfigure(0, weight=1)
@@ -761,8 +787,11 @@ class TkView:
         return tree, empty
 
     def _bind_variable_changes(self) -> None:
-        for variable in (self.pdf_input, self.pdf_aliases, self.pdf_output_dir, self.pdf_output_mode, self.pdf_provider):
-            variable.trace_add("write", lambda *args: self._changed_pdf())
+        for provider in PDF_PROVIDERS:
+            for variable in self.pdf_inputs[provider].values():
+                variable.trace_add(
+                    "write", lambda *args, provider=provider: self._changed_pdf(provider)
+                )
         self.export_input.trace_add("write", lambda *args: self._changed_export())
         for variable in (self.report_input, self.report_manifest, self.report_date, self.report_keep_html):
             variable.trace_add("write", lambda *args: self._changed_report())
@@ -770,14 +799,67 @@ class TkView:
         self.report_verified_md.trace_add("write", lambda *args: self._verified_output_changed())
         self.report_verification_csv.trace_add("write", lambda *args: self._verification_output_changed())
 
-    def _changed_pdf(self) -> None:
-        self._update_pdf_output_hint()
-        if not self._suppress_changes and self.controller:
+    def selected_pdf_provider(self) -> str:
+        return self._selected_pdf_provider
+
+    def _changed_pdf(self, provider: str) -> None:
+        self._update_pdf_output_hint(provider)
+        if (
+            provider == self._selected_pdf_provider
+            and not self._suppress_changes
+            and not self._busy
+            and self.controller
+        ):
             self.controller.invalidate_pdf()
 
-    def _update_pdf_output_hint(self) -> None:
-        files = "JSON2個と比較指示Markdown" if self.pdf_output_mode.get() == AnalysisOutputMode.JSON_WITH_GUIDE.value else "JSON2個"
-        self.pdf_output_hint.set(f"出力先が空欄の場合はPDFフォルダー内の「output」に{files}を保存します。")
+    def _update_pdf_output_hint(self, provider: str) -> None:
+        mode = self.pdf_inputs[provider]["output_mode"].get()
+        files = "JSON2個と比較指示Markdown" if mode == AnalysisOutputMode.JSON_WITH_GUIDE.value else "JSON2個"
+        self.pdf_widgets[provider]["output_hint"].set(
+            f"出力先が空欄の場合はPDFフォルダー内の「output」に{files}を保存します。"
+        )
+
+    def _pdf_tab_changed(self, event: tk.Event) -> None:
+        del event
+        if self._changing_pdf_programmatically:
+            return
+        selected = self.pdf_provider_notebook.select()
+        if not selected:
+            return
+        try:
+            index = self.pdf_provider_notebook.index(selected)
+        except tk.TclError:
+            return
+        if not 0 <= index < len(PDF_PROVIDERS):
+            return
+        provider = PDF_PROVIDERS[index]
+        if self._busy:
+            self._set_pdf_provider_busy(True)
+            return
+        if provider == self._selected_pdf_provider:
+            return
+        self._selected_pdf_provider = provider
+        if self.controller:
+            self.controller.invalidate_pdf()
+        else:
+            for current in PDF_PROVIDERS:
+                self._render_pdf_plan(None, provider=current)
+        self.pdf_tab_canvas.yview_moveto(0.0)
+        self.root.after_idle(self._tab_syncs[TAB_PDF])
+
+    def _set_pdf_provider_busy(self, busy: bool) -> None:
+        self._changing_pdf_programmatically = True
+        try:
+            self.pdf_provider_notebook.state(["!disabled"])
+            for index in range(self.pdf_provider_notebook.index("end")):
+                self.pdf_provider_notebook.tab(index, state="normal")
+            self.pdf_provider_notebook.select(
+                PDF_PROVIDERS.index(self._selected_pdf_provider)
+            )
+            if busy:
+                self.pdf_provider_notebook.state(["disabled"])
+        finally:
+            self._changing_pdf_programmatically = False
 
     def _changed_report(self) -> None:
         if not self._suppress_changes and self.controller:
@@ -831,20 +913,22 @@ class TkView:
         if self.controller:
             self.controller.invalidate_report()
 
-    def _choose_pdf_folder(self) -> None:
+    def _choose_pdf_folder(self, provider: str) -> None:
         selected = filedialog.askdirectory(parent=self.root, title="求人PDFがあるフォルダーを選択")
         if selected:
-            self.pdf_input.set(selected)
+            self.pdf_inputs[provider]["input_dir"].set(selected)
 
-    def _choose_pdf_aliases(self) -> None:
-        selected = filedialog.askopenfilename(parent=self.root, title="見出し別名JSONを選択", filetypes=(("JSON", "*.json"),))
+    def _choose_pdf_aliases(self, provider: str) -> None:
+        selected = filedialog.askopenfilename(
+            parent=self.root, title="見出し別名JSONを選択", filetypes=(("JSON", "*.json"),)
+        )
         if selected:
-            self.pdf_aliases.set(selected)
+            self.pdf_inputs[provider]["aliases"].set(selected)
 
-    def _choose_pdf_output_dir(self) -> None:
+    def _choose_pdf_output_dir(self, provider: str) -> None:
         selected = filedialog.askdirectory(parent=self.root, title="JSON出力フォルダーを選択")
         if selected:
-            self.pdf_output_dir.set(selected)
+            self.pdf_inputs[provider]["output_dir"].set(selected)
 
     def _choose_export_folder(self) -> None:
         selected = filedialog.askdirectory(parent=self.root, title="全文統合テキスト化する求人PDFフォルダーを選択")
@@ -852,7 +936,7 @@ class TkView:
             self.export_input.set(selected)
 
     def _copy_pdf_folder_to_export(self) -> None:
-        source = self.pdf_input.get().strip()
+        source = self.pdf_inputs[self.selected_pdf_provider()]["input_dir"].get().strip()
         if source:
             self.export_input.set(source)
 
@@ -1098,20 +1182,22 @@ class TkView:
             self._changing_tab_programmatically = False
 
     def current_pdf_request(self) -> PdfOrganizationRequest:
-        input_dir = Path(self.pdf_input.get())
-        raw_output_dir = self.pdf_output_dir.get().strip()
+        provider = self.selected_pdf_provider()
+        inputs = self.pdf_inputs[provider]
+        input_dir = Path(inputs["input_dir"].get())
+        raw_output_dir = inputs["output_dir"].get().strip()
         paths = resolve_base_output_paths(
             input_dir,
             Path(raw_output_dir) if raw_output_dir else None,
-            include_guide=self.pdf_output_mode.get() == AnalysisOutputMode.JSON_WITH_GUIDE.value,
+            include_guide=inputs["output_mode"].get() == AnalysisOutputMode.JSON_WITH_GUIDE.value,
         )
         return PdfOrganizationRequest(
             input_dir=input_dir,
-            aliases_path=Path(self.pdf_aliases.get()) if self.pdf_aliases.get().strip() else None,
+            aliases_path=Path(inputs["aliases"].get()) if inputs["aliases"].get().strip() else None,
             job_info_json=paths.job_info_json,
             report_json=paths.report_json,
             comparison_guide_path=paths.comparison_guide_path,
-            provider=self.pdf_provider.get().lower(),
+            provider=provider,
         )
 
     def ask_organization_output_conflict(self, conflict: OrganizationOutputConflict) -> OutputConflictChoice:
@@ -1275,7 +1361,7 @@ class TkView:
             self.progress.configure(value=0)
             self.progress.grid_remove()
 
-        pdf_ready = bool(self.pdf_input.get().strip() and Path(self.pdf_input.get()).is_dir())
+        active_pdf_provider = self.selected_pdf_provider()
         report_ready = bool(
             self.report_input.get().strip()
             and Path(self.report_input.get()).is_file()
@@ -1286,9 +1372,16 @@ class TkView:
             and self.report_verification_csv.get().strip()
         )
         export_ready = bool(self.export_input.get().strip() and Path(self.export_input.get()).is_dir())
-        self.pdf_preview_button.configure(state="normal" if pdf_ready and not model.busy else "disabled")
-        self.pdf_apply_button.configure(state="normal" if pdf_ready and not model.busy else "disabled")
-        self.pdf_open_button.configure(state="normal" if model.pdf_result and not model.busy else "disabled")
+        for provider in PDF_PROVIDERS:
+            widgets = self.pdf_widgets[provider]
+            folder = self.pdf_inputs[provider]["input_dir"].get().strip()
+            pdf_ready = bool(folder and Path(folder).is_dir())
+            enabled = "normal" if pdf_ready and not model.busy else "disabled"
+            widgets["preview_button"].configure(state=enabled)
+            widgets["apply_button"].configure(state=enabled)
+            widgets["open_button"].configure(
+                state="normal" if provider == active_pdf_provider and model.pdf_result and not model.busy else "disabled"
+            )
         self.export_preview_button.configure(state="normal" if export_ready and not model.busy else "disabled")
         self.export_apply_button.configure(state="normal" if export_ready and not model.busy else "disabled")
         self.export_open_button.configure(state="normal" if model.export_result and not model.busy else "disabled")
@@ -1308,7 +1401,14 @@ class TkView:
         self.candidate_panel.set_host_busy(model.busy)
         self.recruit_panel.set_host_busy(model.busy)
         self._set_top_notebook_busy(model.busy)
-        self._render_pdf_plan(model.pdf_plan, model.pdf_output_mode, candidate_confirmed=model.busy or model.pdf_result is not None)
+        self._set_pdf_provider_busy(model.busy)
+        for provider in PDF_PROVIDERS:
+            self._render_pdf_plan(
+                model.pdf_plan if provider == active_pdf_provider else None,
+                model.pdf_output_mode if provider == active_pdf_provider else None,
+                candidate_confirmed=model.busy or model.pdf_result is not None,
+                provider=provider,
+            )
         self._render_export_plan(model.export_plan)
         self._render_report_plan(model.report_plan)
 
@@ -1319,22 +1419,33 @@ class TkView:
             return min(95.0, ((event.document_index - 1 + page_fraction) / event.document_count) * 95.0)
         return {"discovered": 0.0, "building": 96.0, "committing": 98.0, "complete": 100.0}.get(event.stage, 0.0)
 
-    def _render_pdf_plan(self, plan: PdfOrganizationPlan | None, output_mode: str | None = None, *, candidate_confirmed: bool = False) -> None:
-        self._clear_tree(self.pdf_tree)
+    def _render_pdf_plan(
+        self,
+        plan: PdfOrganizationPlan | None,
+        output_mode: str | None = None,
+        *,
+        candidate_confirmed: bool = False,
+        provider: str | None = None,
+    ) -> None:
+        widgets = self.pdf_widgets[provider or self.selected_pdf_provider()]
+        tree = widgets["tree"]
+        empty = widgets["empty"]
+        variables = widgets["stat_vars"]
+        self._clear_tree(tree)
         if plan is None:
-            self._reset_metrics(self.PDF_PRIMARY, self.PDF_SECONDARY, self._pdf_stat_vars)
-            self.pdf_empty.place(relx=0.5, rely=0.5, anchor="center")
-            self.pdf_empty.lift()
-            self._apply_secondary_tones(self._pdf_secondary_labels, {})
-            self.pdf_output_summary.set("保存先は事前確認後に表示します。")
+            self._reset_metrics(self.PDF_PRIMARY, self.PDF_SECONDARY, variables)
+            empty.place(relx=0.5, rely=0.5, anchor="center")
+            empty.lift()
+            self._apply_secondary_tones(widgets["secondary_labels"], {})
+            widgets["output_summary"].set("保存先は事前確認後に表示します。")
             return
         values = {name: 0 for name in self.PDF_STATS}
         values.update(plan.summary)
         values["対象PDF"] = len(plan.results)
         values["PDF未検出"] = len(plan.job_info.stale_jobs)
-        self._set_metrics(values, self._pdf_stat_vars)
-        self.pdf_empty.place_forget()
-        self.pdf_output_summary.set(
+        self._set_metrics(values, variables)
+        empty.place_forget()
+        widgets["output_summary"].set(
             f"保存方法: {output_mode or '新規保存'}　保存先: {plan.job_info_json.parent}\n"
             f"求人情報JSON: {plan.job_info_json.name}　処理レポートJSON: {plan.report_json.name}"
             + (f"\n比較指示書: {plan.comparison_guide_path.name}　" +
@@ -1351,7 +1462,7 @@ class TkView:
                     if report.classification in {"warning", "conflict", "error"}
                 )
             tone = "warning" if result.status in {"部分成功", "改名保留"} else "error" if result.status == "エラー" else "normal"
-            self.pdf_tree.insert(
+            tree.insert(
                 "",
                 "end",
                 values=(
@@ -1367,7 +1478,7 @@ class TkView:
                 tags=(tone,),
             )
         tones = {"部分成功": "warning", "改名保留": "warning", "エラー": "error", "JSON除外": "warning", "PDF未検出": "warning"}
-        self._apply_secondary_tones(self._pdf_secondary_labels, values, tones)
+        self._apply_secondary_tones(widgets["secondary_labels"], values, tones)
 
     def _render_export_plan(self, plan: PdfTextExportPlan | None) -> None:
         self._clear_tree(self.export_tree)
@@ -1474,10 +1585,12 @@ class TkView:
             label.configure(style=style)
 
     def _configure_tree_tags(self) -> None:
-        for tree in (
-            getattr(self, "pdf_tree", None), getattr(self, "export_tree", None),
-            getattr(self, "report_tree", None),
-        ):
+        trees = [
+            self.pdf_widgets[provider]["tree"] for provider in PDF_PROVIDERS
+            if "tree" in self.pdf_widgets[provider]
+        ]
+        trees.extend((getattr(self, "export_tree", None), getattr(self, "report_tree", None)))
+        for tree in trees:
             if tree is None:
                 continue
             tree.tag_configure("normal", foreground=self.visuals.palette.text)

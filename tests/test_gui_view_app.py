@@ -43,6 +43,10 @@ def test_view_constructs_six_tabs_and_platform_adapter(tk_window) -> None:
         assert view.notebook.select()
         assert view.notebook.index(view.notebook.select()) == 0
         assert view.recruit_panel.provider_notebook.index("end") == 2
+        assert view.pdf_provider_notebook.index("end") == 2
+        assert view.pdf_provider_notebook.tab(0, "text") == "JoBins"
+        assert view.pdf_provider_notebook.tab(1, "text") == "circus"
+        assert view.selected_pdf_provider() == "jobins"
         assert view.recruit_panel.provider_notebook.select()
         assert view.recruit_panel.provider_notebook.index(
             view.recruit_panel.provider_notebook.select()
@@ -61,24 +65,24 @@ def test_view_matches_shared_layout_and_initial_state(tk_window) -> None:
 
         assert root.geometry().startswith("960x700")
         assert root.minsize() == (760, 600)
-        assert root.winfo_reqwidth() <= 760
+        assert root.winfo_reqwidth() <= 800
         assert root.winfo_reqheight() <= 600
-        assert len(view._pdf_primary_cards) == 3
+        assert len(view.pdf_widgets["jobins"]["primary_cards"]) == 3
         assert len(view._report_primary_cards) == 3
         assert len(view._export_primary_cards) == 3
-        assert len(view._pdf_secondary_labels) == 7
+        assert len(view.pdf_widgets["jobins"]["secondary_labels"]) == 7
         assert len(view._report_secondary_labels) == 7
         assert len(view._export_secondary_labels) == 4
-        assert hasattr(view, "pdf_output_dir")
+        assert "output_dir" in view.pdf_inputs["jobins"]
         assert not hasattr(view, "pdf_output_csv")
         assert not hasattr(view, "pdf_report_csv")
-        assert view.pdf_tree.cget("height") == 4
+        assert view.pdf_widgets["jobins"]["tree"].cget("height") == 4
         assert view.report_tree.cget("height") == 4
         assert view.export_tree.cget("height") == 4
         assert view.progress.winfo_manager() == ""
-        assert all(view._pdf_stat_vars[name].get() == "未確認" for name in view.PDF_PRIMARY)
-        assert all(view._pdf_stat_vars[name].get() == "—" for name in view.PDF_SECONDARY)
-        assert view.pdf_empty.winfo_manager() == "place"
+        assert all(view.pdf_widgets["jobins"]["stat_vars"][name].get() == "未確認" for name in view.PDF_PRIMARY)
+        assert all(view.pdf_widgets["jobins"]["stat_vars"][name].get() == "—" for name in view.PDF_SECONDARY)
+        assert view.pdf_widgets["jobins"]["empty"].winfo_manager() == "place"
         assert view.report_empty.winfo_manager() == "place"
         assert view.export_empty.winfo_manager() == "place"
     finally:
@@ -94,7 +98,7 @@ def test_minimum_window_keeps_four_result_rows_reachable_by_tab_scroll(tk_window
         root.update()
 
         rowheight = int(view.style.lookup("App.Treeview", "rowheight"))
-        assert view.pdf_tree.winfo_height() >= rowheight * 4
+        assert view.pdf_widgets["jobins"]["tree"].winfo_height() >= rowheight * 4
         view.notebook.select(5)
         root.update()
         assert view.report_tree.winfo_height() >= rowheight * 4
@@ -596,17 +600,17 @@ def test_planless_and_prepared_metric_rendering(tk_window) -> None:
         )
 
         view._render_pdf_plan(plan)
-        assert view._pdf_stat_vars["対象PDF"].get() == "0"
-        assert view._pdf_stat_vars["JSON出力対象"].get() == "2"
-        assert view._pdf_stat_vars["PDF未検出"].get() == "1"
-        assert view.pdf_empty.winfo_manager() == ""
-        assert "求人情報.json" in view.pdf_output_summary.get()
+        assert view.pdf_widgets["jobins"]["stat_vars"]["対象PDF"].get() == "0"
+        assert view.pdf_widgets["jobins"]["stat_vars"]["JSON出力対象"].get() == "2"
+        assert view.pdf_widgets["jobins"]["stat_vars"]["PDF未検出"].get() == "1"
+        assert view.pdf_widgets["jobins"]["empty"].winfo_manager() == ""
+        assert "求人情報.json" in view.pdf_widgets["jobins"]["output_summary"].get()
 
         view._render_pdf_plan(None)
-        assert view._pdf_stat_vars["対象PDF"].get() == "未確認"
-        assert view._pdf_stat_vars["JSON除外"].get() == "—"
-        assert view.pdf_empty.winfo_manager() == "place"
-        assert view.pdf_output_summary.get() == "保存先は事前確認後に表示します。"
+        assert view.pdf_widgets["jobins"]["stat_vars"]["対象PDF"].get() == "未確認"
+        assert view.pdf_widgets["jobins"]["stat_vars"]["JSON除外"].get() == "—"
+        assert view.pdf_widgets["jobins"]["empty"].winfo_manager() == "place"
+        assert view.pdf_widgets["jobins"]["output_summary"].get() == "保存先は事前確認後に表示します。"
     finally:
         root.destroy()
 
@@ -632,7 +636,7 @@ def test_pdf_request_uses_one_optional_output_directory(tk_window, tmp_path: Pat
     root.withdraw()
     try:
         view = TkView(root)
-        view.pdf_input.set(str(tmp_path))
+        view.pdf_inputs["jobins"]["input_dir"].set(str(tmp_path))
 
         default_request = view.current_pdf_request()
         assert default_request.job_info_json == (tmp_path / "output" / "求人情報.json").resolve()
@@ -640,9 +644,96 @@ def test_pdf_request_uses_one_optional_output_directory(tk_window, tmp_path: Pat
         assert not (tmp_path / "output").exists()
 
         selected = tmp_path / "JSON 出力"
-        view.pdf_output_dir.set(str(selected))
+        view.pdf_inputs["jobins"]["output_dir"].set(str(selected))
         selected_request = view.current_pdf_request()
         assert selected_request.job_info_json == (selected / "求人情報.json").resolve()
         assert selected_request.report_json == (selected / "処理レポート.json").resolve()
     finally:
         root.destroy()
+
+
+def test_pdf_provider_inputs_are_independent_and_only_active_changes_invalidate(tk_window, tmp_path):
+    view = TkView(tk_window)
+    tk_window.deiconify()
+    tk_window.update()
+    calls = []
+    view.controller = SimpleNamespace(
+        invalidate_pdf=lambda: (calls.append(view.selected_pdf_provider()), view.render(ViewModel()))
+    )
+    jobins = view.pdf_inputs["jobins"]
+    circus = view.pdf_inputs["circus"]
+    jobins["input_dir"].set(str(tmp_path / "jobins"))
+    jobins["aliases"].set(str(tmp_path / "jobins.json"))
+    jobins["output_dir"].set(str(tmp_path / "out-jobins"))
+    circus["input_dir"].set(str(tmp_path / "circus"))
+    circus["aliases"].set(str(tmp_path / "circus.json"))
+    circus["output_dir"].set(str(tmp_path / "out-circus"))
+    assert calls == ["jobins", "jobins", "jobins"]
+    view.pdf_provider_notebook.select(1)
+    tk_window.update()
+    assert view.selected_pdf_provider() == "circus"
+    assert calls == ["jobins", "jobins", "jobins", "circus"]
+    assert view.current_pdf_request().provider == "circus"
+    assert view.current_pdf_request().input_dir == tmp_path / "circus"
+    view.pdf_provider_notebook.select(0)
+    tk_window.update()
+    assert view.selected_pdf_provider() == "jobins"
+    assert view.current_pdf_request().input_dir == tmp_path / "jobins"
+    assert jobins["aliases"].get() == str(tmp_path / "jobins.json")
+    assert circus["aliases"].get() == str(tmp_path / "circus.json")
+    assert len(calls) == 5
+    view.pdf_provider_notebook.select(0)
+    tk_window.update()
+    assert len(calls) == 5
+    view._copy_pdf_folder_to_export()
+    assert view.export_input.get() == str(tmp_path / "jobins")
+
+
+def test_pdf_provider_switch_clears_both_result_pages(tk_window):
+    view = TkView(tk_window)
+    tk_window.deiconify()
+    tk_window.update()
+    for provider in ("jobins", "circus"):
+        widgets = view.pdf_widgets[provider]
+        widgets["stat_vars"]["対象PDF"].set("10")
+        widgets["output_summary"].set("以前の保存結果")
+        widgets["tree"].insert("", "end", values=("old",))
+        widgets["empty"].place_forget()
+    calls = []
+    view.controller = SimpleNamespace(
+        invalidate_pdf=lambda: (calls.append("invalidate"), view.render(ViewModel()))
+    )
+    view.pdf_provider_notebook.select(1)
+    tk_window.update()
+    assert calls == ["invalidate"]
+    for provider in ("jobins", "circus"):
+        widgets = view.pdf_widgets[provider]
+        assert widgets["stat_vars"]["対象PDF"].get() == "未確認"
+        assert widgets["output_summary"].get() == "保存先は事前確認後に表示します。"
+        assert not widgets["tree"].get_children()
+        assert widgets["empty"].winfo_manager() == "place"
+        assert str(widgets["open_button"].cget("state")) == "disabled"
+    assert view.pdf_widgets["jobins"]["tree"] is not view.pdf_widgets["circus"]["tree"]
+    assert view.pdf_widgets["jobins"]["stat_vars"] is not view.pdf_widgets["circus"]["stat_vars"]
+
+
+def test_pdf_provider_busy_prevents_programmatic_switch_and_recovers(tk_window):
+    view = TkView(tk_window)
+    tk_window.deiconify()
+    tk_window.update()
+    view.render(ViewModel(busy=True))
+    assert view.pdf_provider_notebook.instate(["disabled"])
+    for widget in view._input_widgets:
+        assert str(widget.cget("state")) == "disabled"
+    view.pdf_provider_notebook.state(["!disabled"])
+    view.pdf_provider_notebook.select(1)
+    tk_window.update()
+    assert view.selected_pdf_provider() == "jobins"
+    assert view.pdf_provider_notebook.index(view.pdf_provider_notebook.select()) == 0
+    view.render(ViewModel())
+    assert view.pdf_provider_notebook.instate(["!disabled"])
+    assert all(
+        view.pdf_provider_notebook.tab(index, "state") == "normal"
+        for index in range(2)
+    )
+    assert all(str(widget.cget("state")) == "normal" for widget in view._input_widgets)
