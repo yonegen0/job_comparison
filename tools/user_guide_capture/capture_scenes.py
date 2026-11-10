@@ -440,13 +440,13 @@ def _pdf_preview(output_dir: Path) -> None:
     from job_comparison_app.gui.controller import ViewModel
 
     root, view = _new_view()
-    view.pdf_input.set(r"M:\manual-sample\求人PDF")
-    view.pdf_aliases.set(r"M:\manual-sample\設定\見出し別名.json")
-    view.pdf_output_dir.set(r"M:\manual-sample\求人PDF\output")
+    view.pdf_inputs["jobins"]["input_dir"].set(r"M:\manual-sample\求人PDF")
+    view.pdf_inputs["jobins"]["aliases"].set(r"M:\manual-sample\設定\見出し別名.json")
+    view.pdf_inputs["jobins"]["output_dir"].set(r"M:\manual-sample\求人PDF\output")
     _select_tab(view, 2)
     view.render(ViewModel(status="状態: 事前確認が完了しました。", tone="success", pdf_plan=_pdf_plan(), pdf_output_mode="新規保存"))
-    view.pdf_preview_button.configure(state="normal")
-    view.pdf_apply_button.configure(state="normal")
+    view.pdf_widgets["jobins"]["preview_button"].configure(state="normal")
+    view.pdf_widgets["jobins"]["apply_button"].configure(state="normal")
     view._sync_tab_layouts()
     _capture(root, "08-pdf-organize-preview", output_dir)
     root.destroy()
