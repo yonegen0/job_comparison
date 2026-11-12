@@ -360,9 +360,10 @@ class TkView:
     def _build_pdf_tab(self) -> None:
         self.pdf_tab.columnconfigure(0, weight=1)
         self.pdf_tab.rowconfigure(0, weight=1)
-        self.pdf_provider_notebook = ttk.Notebook(
-            self.pdf_tab, style=STYLE_NOTEBOOK, height=self.visuals.scaled_px(580)
-        )
+        # Allow the nested notebook to request enough height for the provider
+        # page, including the four-row results table. The outer canvas handles
+        # scrolling when the actual window is smaller than that requested size.
+        self.pdf_provider_notebook = ttk.Notebook(self.pdf_tab, style=STYLE_NOTEBOOK)
         self.pdf_provider_notebook.grid(row=0, column=0, sticky="nsew")
         self._changing_pdf_programmatically = True
         try:
