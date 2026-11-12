@@ -360,11 +360,12 @@ class TkView:
     def _build_pdf_tab(self) -> None:
         self.pdf_tab.columnconfigure(0, weight=1)
         self.pdf_tab.rowconfigure(0, weight=1)
-        # Allow the nested notebook to request enough height for the provider
-        # page, including the four-row results table. The outer canvas handles
-        # scrolling when the actual window is smaller than that requested size.
+        # A fixed notebook height can shrink the results tree below four rows.
+        # Explicitly size the notebook from the fully constructed provider pages
+        # so that the surrounding tab canvas, not the tree, handles overflow.
         self.pdf_provider_notebook = ttk.Notebook(self.pdf_tab, style=STYLE_NOTEBOOK)
         self.pdf_provider_notebook.grid(row=0, column=0, sticky="nsew")
+        pages: list[ttk.Frame] = []
         self._changing_pdf_programmatically = True
         try:
             for provider, label in (("jobins", "JoBins"), ("circus", "circus")):
@@ -373,9 +374,14 @@ class TkView:
                 page.rowconfigure(2, weight=1)
                 self.pdf_provider_notebook.add(page, text=label)
                 self._build_pdf_provider_page(page, provider)
+                pages.append(page)
             self.pdf_provider_notebook.select(0)
         finally:
             self._changing_pdf_programmatically = False
+        self.pdf_provider_notebook.update_idletasks()
+        self.pdf_provider_notebook.configure(
+            height=max(page.winfo_reqheight() for page in pages)
+        )
         self.pdf_provider_notebook.bind("<<NotebookTabChanged>>", self._pdf_tab_changed, add="+")
 
     def _build_pdf_provider_page(self, page: ttk.Frame, provider: str) -> None:
