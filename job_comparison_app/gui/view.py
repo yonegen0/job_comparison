@@ -772,7 +772,13 @@ class TkView:
         container = ttk.Frame(parent, style=STYLE_CARD_BODY)
         container.grid(row=row, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(0, weight=1)
+        # Reserve space for four body rows plus the native heading. Relying
+        # solely on Treeview(height=4) lets Windows ttk round its requested
+        # size below four configured row heights inside nested canvas cards.
+        row_height = int(self.style.lookup(STYLE_TREE, "rowheight"))
+        container.rowconfigure(
+            0, weight=1, minsize=row_height * 4 + self.visuals.scaled_px(28)
+        )
         tree = ttk.Treeview(container, columns=columns, show="headings", height=4, style=STYLE_TREE)
         for column, heading, width in zip(columns, headings, widths, strict=True):
             tree.heading(column, text=heading)
