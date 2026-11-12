@@ -98,7 +98,30 @@ def test_minimum_window_keeps_four_result_rows_reachable_by_tab_scroll(tk_window
         root.update()
 
         rowheight = int(view.style.lookup("App.Treeview", "rowheight"))
-        assert view.pdf_widgets["jobins"]["tree"].winfo_height() >= rowheight * 4
+        for index, provider in enumerate(("jobins", "circus")):
+            view.pdf_provider_notebook.select(index)
+            root.update()
+            tree = view.pdf_widgets[provider]["tree"]
+            assert tree.winfo_height() >= rowheight * 4
+
+            # Scrolling the outer tab must make every result row reachable.
+            view.pdf_tab_canvas.yview_moveto(1.0)
+            root.update()
+            viewport_bottom = view.pdf_tab_canvas.winfo_rooty() + view.pdf_tab_canvas.winfo_height()
+            assert tree.winfo_rooty() + tree.winfo_height() <= viewport_bottom + 2, (
+                f"provider={provider}, yview={view.pdf_tab_canvas.yview()}, "
+                f"scrollregion={view.pdf_tab_canvas.cget('scrollregion')}, "
+                f"canvas_height={view.pdf_tab_canvas.winfo_height()}, "
+                f"content_height={view.pdf_tab.winfo_height()}, "
+                f"content_reqheight={view.pdf_tab.winfo_reqheight()}, "
+                f"notebook_height={view.pdf_provider_notebook.winfo_height()}, "
+                f"notebook_reqheight={view.pdf_provider_notebook.winfo_reqheight()}, "
+                f"notebook_option_height={view.pdf_provider_notebook.cget('height')}, "
+                f"page_height={tree.winfo_toplevel().winfo_height()}, "
+                f"tree_bottom={tree.winfo_rooty() + tree.winfo_height()}, "
+                f"viewport_bottom={viewport_bottom}"
+            )
+
         view.notebook.select(5)
         root.update()
         assert view.report_tree.winfo_height() >= rowheight * 4

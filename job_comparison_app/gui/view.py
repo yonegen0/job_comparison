@@ -360,10 +360,12 @@ class TkView:
     def _build_pdf_tab(self) -> None:
         self.pdf_tab.columnconfigure(0, weight=1)
         self.pdf_tab.rowconfigure(0, weight=1)
-        self.pdf_provider_notebook = ttk.Notebook(
-            self.pdf_tab, style=STYLE_NOTEBOOK, height=self.visuals.scaled_px(580)
-        )
+        # A fixed notebook height can shrink the results tree below four rows.
+        # Explicitly size the notebook from the fully constructed provider pages
+        # so that the surrounding tab canvas, not the tree, handles overflow.
+        self.pdf_provider_notebook = ttk.Notebook(self.pdf_tab, style=STYLE_NOTEBOOK)
         self.pdf_provider_notebook.grid(row=0, column=0, sticky="nsew")
+        pages: list[ttk.Frame] = []
         self._changing_pdf_programmatically = True
         try:
             for provider, label in (("jobins", "JoBins"), ("circus", "circus")):
@@ -372,9 +374,21 @@ class TkView:
                 page.rowconfigure(2, weight=1)
                 self.pdf_provider_notebook.add(page, text=label)
                 self._build_pdf_provider_page(page, provider)
+                pages.append(page)
             self.pdf_provider_notebook.select(0)
         finally:
             self._changing_pdf_programmatically = False
+        self.pdf_provider_notebook.update_idletasks()
+        # RoundedCard canvases can under-report their requested heights before
+        # the first mapped layout on Windows. Reserve a DPI-scaled minimum so
+        # the outer canvas gets a scrollregion large enough for the result rows.
+        self.pdf_provider_notebook.configure(
+            height=max(
+                self.visuals.scaled_px(720),
+                max(page.winfo_reqheight() for page in pages)
+                + self.visuals.scaled_px(24),
+            )
+        )
         self.pdf_provider_notebook.bind("<<NotebookTabChanged>>", self._pdf_tab_changed, add="+")
 
     def _build_pdf_provider_page(self, page: ttk.Frame, provider: str) -> None:
@@ -763,7 +777,13 @@ class TkView:
         container = ttk.Frame(parent, style=STYLE_CARD_BODY)
         container.grid(row=row, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(0, weight=1)
+        # Reserve space for four body rows plus the native heading. Relying
+        # solely on Treeview(height=4) lets Windows ttk round its requested
+        # size below four configured row heights inside nested canvas cards.
+        row_height = int(self.style.lookup(STYLE_TREE, "rowheight"))
+        container.rowconfigure(
+            0, weight=1, minsize=row_height * 4 + self.visuals.scaled_px(28)
+        )
         tree = ttk.Treeview(container, columns=columns, show="headings", height=4, style=STYLE_TREE)
         for column, heading, width in zip(columns, headings, widths, strict=True):
             tree.heading(column, text=heading)
