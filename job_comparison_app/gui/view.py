@@ -380,7 +380,9 @@ class TkView:
             self._changing_pdf_programmatically = False
         self.pdf_provider_notebook.update_idletasks()
         self.pdf_provider_notebook.configure(
+            # Allow for native ttk borders and DPI-dependent pixel rounding.
             height=max(page.winfo_reqheight() for page in pages)
+            + self.visuals.scaled_px(24)
         )
         self.pdf_provider_notebook.bind("<<NotebookTabChanged>>", self._pdf_tab_changed, add="+")
 
