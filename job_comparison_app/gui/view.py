@@ -379,10 +379,15 @@ class TkView:
         finally:
             self._changing_pdf_programmatically = False
         self.pdf_provider_notebook.update_idletasks()
+        # RoundedCard canvases can under-report their requested heights before
+        # the first mapped layout on Windows. Reserve a DPI-scaled minimum so
+        # the outer canvas gets a scrollregion large enough for the result rows.
         self.pdf_provider_notebook.configure(
-            # Allow for native ttk borders and DPI-dependent pixel rounding.
-            height=max(page.winfo_reqheight() for page in pages)
-            + self.visuals.scaled_px(24)
+            height=max(
+                self.visuals.scaled_px(720),
+                max(page.winfo_reqheight() for page in pages)
+                + self.visuals.scaled_px(24),
+            )
         )
         self.pdf_provider_notebook.bind("<<NotebookTabChanged>>", self._pdf_tab_changed, add="+")
 
