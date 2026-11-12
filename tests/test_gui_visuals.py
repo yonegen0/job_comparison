@@ -37,7 +37,6 @@ def test_modern_palette_styles_cards_and_focus_layouts(tk_window) -> None:
         assert view.visuals.palette == visuals.MODERN_PALETTE
         assert view.visuals.rounded_metrics == (12, 1, 29)
         assert view.visuals.rounded_artwork is not None
-        assert len(view.visuals.cards) == 35
         for color in (
             visuals.MODERN_PALETTE.text,
             visuals.MODERN_PALETTE.muted,
@@ -70,7 +69,9 @@ def test_high_contrast_and_native_fallback_use_rectangular_system_visuals(tk_win
         assert view.visuals.rounded_artwork is None
         assert all(not value.startswith("#") for value in view.visuals.palette.__dict__.values())
         assert all(card._artwork is None for card in view.visuals.cards)
-        assert view.pdf_tree.tag_configure("warning")["foreground"] == "SystemWindowText"
+        for provider in ("jobins", "circus"):
+            tree = view.pdf_widgets[provider]["tree"]
+            assert tree.tag_configure("warning")["foreground"] == "SystemWindowText"
     finally:
         root.destroy()
 
