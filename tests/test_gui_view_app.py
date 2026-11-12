@@ -98,7 +98,18 @@ def test_minimum_window_keeps_four_result_rows_reachable_by_tab_scroll(tk_window
         root.update()
 
         rowheight = int(view.style.lookup("App.Treeview", "rowheight"))
-        assert view.pdf_widgets["jobins"]["tree"].winfo_height() >= rowheight * 4
+        for index, provider in enumerate(("jobins", "circus")):
+            view.pdf_provider_notebook.select(index)
+            root.update()
+            tree = view.pdf_widgets[provider]["tree"]
+            assert tree.winfo_height() >= rowheight * 4
+
+            # Scrolling the outer tab must make every result row reachable.
+            view.pdf_tab_canvas.yview_moveto(1.0)
+            root.update()
+            viewport_bottom = view.pdf_tab_canvas.winfo_rooty() + view.pdf_tab_canvas.winfo_height()
+            assert tree.winfo_rooty() + tree.winfo_height() <= viewport_bottom + 2
+
         view.notebook.select(5)
         root.update()
         assert view.report_tree.winfo_height() >= rowheight * 4
