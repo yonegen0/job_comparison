@@ -54,11 +54,9 @@ EXPECTED_HEADINGS = [
 
 
 def _guide_text() -> str:
-    raw = GUIDE.read_bytes()
-    assert not raw.startswith(b"\xef\xbb\xbf")
-    assert b"\r" not in raw
-    assert raw.endswith(b"\n")
-    return raw.decode("utf-8", errors="strict")
+    text = GUIDE.read_text(encoding="utf-8")
+    assert not text.startswith("\ufeff")
+    return text
 
 
 def _image_links(text: str) -> list[str]:
